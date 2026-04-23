@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use sqlx::{AnyPool, Error, Row, Transaction};
 use std::convert::TryFrom;
@@ -91,6 +91,12 @@ pub struct UploadPartRecord {
     pub etag: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CacheGeneration {
+    pub previous: i64,
+    pub current: i64,
+}
+
 fn parse_uuid(value: String) -> sqlx::Result<Uuid> {
     Uuid::parse_str(&value).map_err(|err| sqlx::Error::Decode(Box::new(err)))
 }
@@ -109,8 +115,8 @@ fn timestamp_to_datetime(ts: i64) -> sqlx::Result<DateTime<Utc>> {
 }
 
 fn generate_cache_numeric_id() -> i64 {
-    let mut rng = rand::thread_rng();
-    rng.gen_range(1..=MAX_SAFE_CACHE_NUMERIC_ID)
+    let mut rng = rand::rng();
+    rng.random_range(1..=MAX_SAFE_CACHE_NUMERIC_ID)
 }
 
 async fn insert_cache_numeric_id(
@@ -450,6 +456,56 @@ pub async fn list_entries_ordered(
 
         rows.into_iter().map(map_cache_entry).collect()
     }
+}
+
+pub async fn current_generation(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+) -> Result<i64, sqlx::Error> {
+    let query = rewrite_placeholders(
+        "SELECT current_generation FROM cache_state WHERE singleton = ? LIMIT 1",
+        driver,
+    );
+    sqlx::query_scalar::<_, i64>(&query)
+        .bind(1_i32)
+        .fetch_one(pool)
+        .await
+}
+
+pub async fn rotate_generation_and_clear_entries(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+) -> Result<CacheGeneration, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let select_query = rewrite_placeholders(
+        "SELECT current_generation FROM cache_state WHERE singleton = ? LIMIT 1",
+        driver,
+    );
+    let previous = sqlx::query_scalar::<_, i64>(&select_query)
+        .bind(1_i32)
+        .fetch_one(&mut *tx)
+        .await?;
+    let current = previous + 1;
+
+    let update_query = rewrite_placeholders(
+        "UPDATE cache_state SET current_generation = ? WHERE singleton = ?",
+        driver,
+    );
+    sqlx::query(&update_query)
+        .bind(current)
+        .bind(1_i32)
+        .execute(&mut *tx)
+        .await?;
+
+    let delete_uploads_query = rewrite_placeholders("DELETE FROM cache_uploads", driver);
+    sqlx::query(&delete_uploads_query).execute(&mut *tx).await?;
+
+    let delete_entries_query = rewrite_placeholders("DELETE FROM cache_entries", driver);
+    sqlx::query(&delete_entries_query).execute(&mut *tx).await?;
+
+    tx.commit().await?;
+
+    Ok(CacheGeneration { previous, current })
 }
 
 #[expect(

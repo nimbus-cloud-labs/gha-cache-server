@@ -130,6 +130,36 @@ impl FsStore {
         Ok(self.root.join(relative))
     }
 
+    async fn remove_empty_parent_dirs(&self, path: &Path) -> Result<()> {
+        let mut current = path.parent().map(|p| p.to_path_buf());
+        while let Some(dir) = current.clone() {
+            if dir == self.root {
+                break;
+            }
+            if !dir.starts_with(&self.root) {
+                break;
+            }
+
+            let next = dir.parent().map(|p| p.to_path_buf());
+            match fs::remove_dir(&dir).await {
+                Ok(()) => {
+                    current = next;
+                }
+                Err(ref err) if err.kind() == ErrorKind::NotFound => {
+                    current = next;
+                }
+                Err(err) if err.kind() == ErrorKind::DirectoryNotEmpty => break,
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!("failed to remove empty directory {}", dir.display())
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn sanitize_key(key: &str) -> Result<PathBuf> {
         let mut normalized = PathBuf::new();
         for component in Path::new(key).components() {
@@ -369,33 +399,21 @@ impl BlobStore for FsStore {
             }
         }
 
-        let mut current = path.parent().map(|p| p.to_path_buf());
-        while let Some(dir) = current.clone() {
-            if dir == self.root {
-                break;
-            }
-            if !dir.starts_with(&self.root) {
-                break;
-            }
+        self.remove_empty_parent_dirs(&path).await
+    }
 
-            let next = dir.parent().map(|p| p.to_path_buf());
-            match fs::remove_dir(&dir).await {
-                Ok(()) => {
-                    current = next;
-                }
-                Err(ref err) if err.kind() == ErrorKind::NotFound => {
-                    current = next;
-                }
-                Err(err) if err.kind() == ErrorKind::DirectoryNotEmpty => break,
-                Err(err) => {
-                    return Err(err).with_context(|| {
-                        format!("failed to remove empty directory {}", dir.display())
-                    });
-                }
+    async fn delete_prefix(&self, prefix: &str) -> Result<()> {
+        let path = self.destination_path(prefix)?;
+        match fs::remove_dir_all(&path).await {
+            Ok(()) => {}
+            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("failed to remove prefix at {}", path.display()));
             }
         }
 
-        Ok(())
+        self.remove_empty_parent_dirs(&path).await
     }
 }
 

@@ -80,3 +80,15 @@ following environment variables control this background job:
 * `CACHE_STORAGE_MAX_BYTES` – optional soft limit for the total size (in bytes)
   of all cache entries. When the limit is exceeded, the cleanup loop removes the
   least recently accessed entries until usage drops below the threshold.
+
+## Administrative cache resets
+
+The `DeleteAllCaches` administrative command rotates the active storage
+generation before it clears the live metadata set. Newly reserved caches are
+written under a fresh `vN/` storage prefix, which makes the reset immediate for
+lookups without changing the public cache protocol.
+
+On the filesystem backend the retired generation directory is removed
+immediately. Remote backends currently treat retired-generation blob deletion as
+best effort; metadata is still cleared right away, so the old blobs become
+unreachable even when storage-side cleanup must be completed separately.

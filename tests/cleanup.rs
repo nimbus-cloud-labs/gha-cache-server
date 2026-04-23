@@ -8,8 +8,8 @@ use std::time::Duration;
 use gha_cache_server::cleanup;
 use gha_cache_server::config::{CleanupSettings, DatabaseDriver};
 use gha_cache_server::meta::{self, CacheEntry};
-use gha_cache_server::storage::BlobStore;
 use gha_cache_server::storage::fs::FsStore;
+use gha_cache_server::storage::{BlobStore, generation_prefix};
 use sqlx::AnyPool;
 use sqlx::any::AnyPoolOptions;
 use tempfile::TempDir;
@@ -189,4 +189,73 @@ async fn cleanup_enforces_size_limit() {
 
     handle.abort();
     let _ = handle.await;
+}
+
+#[tokio::test]
+async fn delete_all_caches_rotates_generation_and_removes_retired_prefix() {
+    let pool = setup_pool().await;
+    let temp_dir = TempDir::new().expect("temp dir");
+    let store = Arc::new(
+        FsStore::new(temp_dir.path().to_path_buf(), None, None, None)
+            .await
+            .expect("create store"),
+    );
+
+    assert_eq!(
+        meta::current_generation(&pool, DatabaseDriver::Sqlite)
+            .await
+            .expect("read initial generation"),
+        1
+    );
+
+    let retired_prefix = generation_prefix(1);
+    let storage_key = format!("{retired_prefix}/ac/test/cache.tzst");
+    let _entry = meta::create_entry(
+        &pool,
+        DatabaseDriver::Sqlite,
+        "org",
+        "repo",
+        "primary",
+        TEST_VERSION,
+        "_",
+        &storage_key,
+    )
+    .await
+    .expect("create entry");
+
+    let path = temp_dir.path().join(&storage_key);
+    fs::create_dir_all(path.parent().expect("storage parent"))
+        .await
+        .expect("create storage directories");
+    fs::write(&path, b"payload").await.expect("write payload");
+
+    let deleted = cleanup::delete_all_caches(&pool, DatabaseDriver::Sqlite, store.clone())
+        .await
+        .expect("delete all caches");
+    assert_eq!(deleted, 1);
+
+    assert_eq!(
+        meta::current_generation(&pool, DatabaseDriver::Sqlite)
+            .await
+            .expect("read rotated generation"),
+        2
+    );
+    assert!(
+        fs::metadata(temp_dir.path().join(retired_prefix))
+            .await
+            .is_err(),
+        "retired generation prefix should be removed"
+    );
+
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM cache_entries")
+        .fetch_one(&pool)
+        .await
+        .expect("count entries");
+    assert_eq!(remaining, 0);
+
+    let uploads: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM cache_uploads")
+        .fetch_one(&pool)
+        .await
+        .expect("count uploads");
+    assert_eq!(uploads, 0);
 }

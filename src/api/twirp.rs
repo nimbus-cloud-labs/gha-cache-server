@@ -7,8 +7,6 @@ use axum::{
     http::{HeaderValue, header, request::Parts},
     response::{IntoResponse, Response},
 };
-use base64::Engine;
-use base64::engine::general_purpose;
 use http_body_util::BodyExt;
 use prost::Message;
 use serde::{Serialize, de::DeserializeOwned};
@@ -18,7 +16,7 @@ use uuid::Uuid;
 use crate::api::path::encode_path_segment;
 use crate::api::proto::cache;
 use crate::api::types::*;
-use crate::api::upload::{normalize_key, normalize_version};
+use crate::api::upload::{build_generation_scoped_storage_key, normalize_key, normalize_version};
 use crate::db::rewrite_placeholders;
 use crate::error::{ApiError, Result};
 use crate::http::AppState;
@@ -262,12 +260,9 @@ pub async fn create_cache_entry(
     let (req, format, origin) = request.into_parts();
     let key = normalize_key(&req.key)?;
     let version = normalize_version(&req.version)?;
-    let storage_key = format!(
-        "twirp/{}/{}-{}",
-        general_purpose::STANDARD.encode(&key),
-        version,
-        Uuid::new_v4()
-    );
+    let generation = meta::current_generation(&st.pool, st.database_driver).await?;
+    let storage_key =
+        build_generation_scoped_storage_key(generation, "twirp", &key, Some(&version));
     let entry = meta::create_entry(
         &st.pool,
         st.database_driver,

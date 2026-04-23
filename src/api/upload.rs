@@ -17,7 +17,7 @@ use crate::http::AppState;
 use crate::meta;
 use crate::{
     error::{ApiError, Result},
-    storage::{BlobStore, BlobUploadPayload},
+    storage::{BlobStore, BlobUploadPayload, generation_prefix},
 };
 
 const MAX_CACHE_KEY_LENGTH: usize = 512;
@@ -75,6 +75,20 @@ fn build_download_url_from_headers(headers: &HeaderMap, cache_key: &str, id: Uui
     let encoded_key = encode_path_segment(cache_key);
     let encoded_filename = encode_path_segment(&format!("{id}.tgz"));
     format!("{scheme}://{authority}/download/{encoded_key}/{encoded_filename}")
+}
+
+pub(crate) fn build_generation_scoped_storage_key(
+    generation: i64,
+    area: &str,
+    key: &str,
+    version: Option<&str>,
+) -> String {
+    let prefix = generation_prefix(generation);
+    let encoded_key = general_purpose::STANDARD.encode(key);
+    match version {
+        Some(version) => format!("{prefix}/{area}/{encoded_key}/{version}-{}", Uuid::new_v4()),
+        None => format!("{prefix}/{area}/{encoded_key}/{}", Uuid::new_v4()),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -344,12 +358,9 @@ pub async fn reserve_cache(
 ) -> Result<Json<serde_json::Value>> {
     let key = normalize_key(&req.key)?;
     let version = normalize_version(&req.version)?;
-
-    let storage_key = format!(
-        "ac/org/_/repo/_/key/{}/{}",
-        general_purpose::STANDARD.encode(&key),
-        Uuid::new_v4()
-    );
+    let generation = meta::current_generation(&st.pool, st.database_driver).await?;
+    let storage_key =
+        build_generation_scoped_storage_key(generation, "ac/org/_/repo/_/key", &key, None);
     let entry = meta::create_entry(
         &st.pool,
         st.database_driver,

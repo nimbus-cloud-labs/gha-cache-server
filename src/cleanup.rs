@@ -7,9 +7,8 @@ use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, error, info, warn};
 
 use crate::config::{CleanupSettings, DatabaseDriver};
-use crate::db::rewrite_placeholders;
 use crate::meta::{self, CacheEntry};
-use crate::storage::BlobStore;
+use crate::storage::{BlobStore, generation_prefix};
 
 pub async fn run_cleanup_loop(
     pool: AnyPool,
@@ -127,16 +126,17 @@ pub async fn delete_all_caches(
     driver: DatabaseDriver,
     store: Arc<dyn BlobStore>,
 ) -> anyhow::Result<usize> {
-    let entries = meta::list_entries_ordered(pool, driver, None).await?;
-    let mut deleted = 0usize;
+    let deleted = meta::list_entries_ordered(pool, driver, None).await?.len();
+    let generation = meta::rotate_generation_and_clear_entries(pool, driver).await?;
+    let retired_prefix = generation_prefix(generation.previous);
 
-    for entry in entries {
-        purge_entry(&store, pool, driver, &entry).await?;
-        deleted += 1;
+    if let Err(err) = store.delete_prefix(&retired_prefix).await {
+        warn!(
+            prefix = %retired_prefix,
+            ?err,
+            "failed to delete retired cache generation from blob storage"
+        );
     }
-
-    let query = rewrite_placeholders("DELETE FROM cache_uploads", driver);
-    sqlx::query(&query).execute(pool).await?;
 
     Ok(deleted)
 }

@@ -34,3 +34,6 @@ above for details.
 
 Further configuration topics, including cleanup controls and advanced storage
 settings, are documented in [`docs/configuration.md`](docs/configuration.md).
+Administrative cache resets rotate an internal storage generation so new
+artifacts are written below a fresh `vN/` prefix while the previous generation
+is retired from metadata immediately.

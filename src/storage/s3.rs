@@ -423,6 +423,14 @@ impl BlobStore for S3Store {
             .await?;
         Ok(())
     }
+
+    async fn delete_prefix(&self, prefix: &str) -> anyhow::Result<()> {
+        anyhow::bail!(
+            "prefix deletion is not implemented for S3 bucket {} and prefix {}",
+            self.bucket,
+            prefix
+        );
+    }
 }
 
 #[cfg(test)]

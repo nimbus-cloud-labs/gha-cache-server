@@ -13,12 +13,12 @@ use google_cloud_storage::client::{Storage, StorageControl};
 use google_cloud_storage::model::{Object, compose_object_request::SourceObject};
 use google_cloud_storage::streaming_source::{Payload, SizeHint, StreamingSource};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_encode};
-use rand::rngs::OsRng;
 use rsa::RsaPrivateKey;
 use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::DecodePrivateKey;
-use rsa::signature::{RandomizedSigner, SignatureEncoding};
+use rsa::sha2::Sha256 as RsaSha256;
+use rsa::signature::{SignatureEncoding, Signer};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use url::Url;
@@ -328,6 +328,14 @@ impl BlobStore for GcsStore {
             }
         }
     }
+
+    async fn delete_prefix(&self, prefix: &str) -> Result<()> {
+        anyhow::bail!(
+            "prefix deletion is not implemented for GCS bucket {} and prefix {}",
+            self.bucket_name,
+            prefix
+        );
+    }
 }
 
 #[derive(Clone)]
@@ -422,10 +430,8 @@ impl GcsSigner {
 
         let string_to_sign = format!("GOOG4-RSA-SHA256\n{timestamp}\n{scope}\n{hashed_hex}");
 
-        let signing_key = SigningKey::<Sha256>::new((*self.private_key).clone());
-        let signature = signing_key
-            .sign_with_rng(&mut OsRng, string_to_sign.as_bytes())
-            .to_vec();
+        let signing_key = SigningKey::<RsaSha256>::new((*self.private_key).clone());
+        let signature = signing_key.sign(string_to_sign.as_bytes()).to_vec();
         let signature_hex = to_hex(&signature);
 
         params.push(("X-Goog-Signature".to_string(), signature_hex));

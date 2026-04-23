@@ -19,6 +19,10 @@ pub struct PresignedUrl {
     pub url: url::Url,
 }
 
+pub fn generation_prefix(generation: i64) -> String {
+    format!("v{generation}")
+}
+
 /// Stream of bytes representing a multipart upload part.
 ///
 /// The stream yields the raw body of a single part and propagates failures via
@@ -55,4 +59,8 @@ pub trait BlobStore: Send + Sync + 'static {
     async fn get(&self, key: &str) -> anyhow::Result<Option<BlobDownloadStream>>;
 
     async fn delete(&self, key: &str) -> anyhow::Result<()>;
+
+    async fn delete_prefix(&self, prefix: &str) -> anyhow::Result<()> {
+        anyhow::bail!("prefix deletion is not supported for prefix {prefix}");
+    }
 }
