@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.22
 
-FROM rust:1.90-trixie AS builder
+FROM rust:1.94-trixie AS builder
 LABEL org.opencontainers.image.source="https://github.com/n-cloud-labs/gha-cache-server"
 WORKDIR /usr/src/gha-cache-server
 
