@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.18
+# syntax=docker/dockerfile:1.22
 
 FROM rust:1.90-trixie AS builder
 LABEL org.opencontainers.image.source="https://github.com/n-cloud-labs/gha-cache-server"
@@ -31,6 +31,7 @@ RUN install_packages ca-certificates
 # Default configuration values. Override them with environment variables at runtime.
 ENV PORT=8080 \
     RUST_LOG="info,github_actions_cache_rs=info" \
+    MIMALLOC_ARENA_RESERVE=262144 \
     MAX_CONCURRENCY=64 \
     REQUEST_TIMEOUT_SECS=3600 \
     ENABLE_DIRECT_DOWNLOADS=true \

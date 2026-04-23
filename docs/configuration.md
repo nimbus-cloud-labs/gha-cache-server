@@ -1,5 +1,16 @@
 # Configuration
 
+## Memory allocator settings
+
+The release binary uses `mimalloc` as its global allocator. The following
+environment variable is useful when you want to reduce the amount of virtual
+address space reserved by the allocator:
+
+* `MIMALLOC_ARENA_RESERVE` - initial arena reservation in KiB. The container
+  image defaults to `262144` (256 MiB) instead of mimalloc's larger 64-bit
+  default. Lower values usually reduce `VSZ`, while higher values may improve
+  allocation throughput under heavier concurrent loads.
+
 ## Blob storage backend
 
 The server supports pluggable blob storage. Select the implementation via the

@@ -7,6 +7,10 @@ DATABASE_URL=sqlite:///var/lib/gha-cache-server/cache.db
 # Listening port for the HTTP server (defaults to 8080 when unset).
 #PORT=8080
 
+# Initial mimalloc arena reservation in KiB. Lower values reduce virtual address
+# space usage at the cost of potentially more frequent arena growth.
+#MIMALLOC_ARENA_RESERVE=262144
+
 # Toggle direct download URLs. Accepts "true" or "false" and defaults to "true".
 #ENABLE_DIRECT_DOWNLOADS=true
 
