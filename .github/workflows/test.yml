@@ -55,7 +55,7 @@ jobs:
       - name: Update Rust toolchain
         run: rustup update
       - name: Install required packages
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client protobuf-compiler libprotobuf-dev
       - name: Install sqlx-cli
         run: cargo install sqlx-cli --no-default-features --features native-tls,postgres,mysql,sqlite
       - name: Prepare database
@@ -93,7 +93,7 @@ jobs:
       - name: Update Rust toolchain
         run: rustup update
       - name: Install required packages
-        run: sudo apt-get update && sudo apt-get install -y default-mysql-client protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y default-mysql-client protobuf-compiler libprotobuf-dev
       - name: Install sqlx-cli
         run: cargo install sqlx-cli --no-default-features --features native-tls,postgres,mysql,sqlite
       - name: Prepare database
@@ -119,7 +119,7 @@ jobs:
       - name: Update Rust toolchain
         run: rustup update
       - name: Install required packages
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev
       - name: Install sqlx-cli
         run: cargo install sqlx-cli --no-default-features --features native-tls,postgres,mysql,sqlite
       - name: Prepare database

@@ -2,7 +2,7 @@ Source: gha-cache-server
 Section: net
 Priority: optional
 Maintainer: Alessandro Chitolina <alekitto@gmail.com>
-Build-Depends: debhelper (>= 13), pkg-config, protobuf-compiler
+Build-Depends: debhelper (>= 13), pkg-config, protobuf-compiler, libprotobuf-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/n-cloud-labs/gha-cache-server
 Rules-Requires-Root: no

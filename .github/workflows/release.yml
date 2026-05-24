@@ -96,7 +96,7 @@ jobs:
         if: matrix.target == 'debian'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential debhelper devscripts debsigs pkg-config protobuf-compiler
+          sudo apt-get install -y build-essential debhelper devscripts debsigs pkg-config protobuf-compiler libprotobuf-dev
 
       - name: Prepare Debian metadata
         if: matrix.target == 'debian'
@@ -177,7 +177,7 @@ jobs:
               echo "keepcache=True" >> /etc/dnf/dnf.conf
               dnf -y update
               dnf -y group install development-tools
-              dnf -y install rpm-build rpmdevtools systemd-rpm-macros cmake pkgconfig protobuf-compiler git curl which tar sccache
+              dnf -y install rpm-build rpmdevtools systemd-rpm-macros cmake pkgconfig protobuf-compiler protobuf-devel git curl which tar sccache
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
               source "$HOME/.cargo/env"
               rustup default stable
