@@ -213,7 +213,7 @@ async fn artifact_twirp_roundtrip_uses_local_storage() -> Result<()> {
         .header("content-type", "application/json")
         .json(&json!({
             "workflowRunBackendId": "run-1",
-            "workflowJobRunBackendId": "job-1",
+            "workflowJobRunBackendId": "job-downloader",
             "nameFilter": "logs"
         }))
         .send()
@@ -231,7 +231,7 @@ async fn artifact_twirp_roundtrip_uses_local_storage() -> Result<()> {
         .header("content-type", "application/json")
         .json(&json!({
             "workflowRunBackendId": "run-1",
-            "workflowJobRunBackendId": "job-1",
+            "workflowJobRunBackendId": "job-downloader",
             "name": "logs"
         }))
         .send()

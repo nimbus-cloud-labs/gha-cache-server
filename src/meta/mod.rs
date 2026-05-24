@@ -732,18 +732,35 @@ pub async fn find_active_artifact_by_name(
     pool: &AnyPool,
     driver: DatabaseDriver,
     workflow_run_backend_id: &str,
-    workflow_job_run_backend_id: &str,
     name: &str,
 ) -> Result<Option<ArtifactEntry>, sqlx::Error> {
     let query = rewrite_placeholders(
-        "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE workflow_run_backend_id = ? AND workflow_job_run_backend_id = ? AND name = ? AND state != ? ORDER BY created_at DESC LIMIT 1",
+        "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE workflow_run_backend_id = ? AND name = ? AND state != ? ORDER BY created_at DESC LIMIT 1",
         driver,
     );
     let maybe = sqlx::query(&query)
         .bind(workflow_run_backend_id)
-        .bind(workflow_job_run_backend_id)
         .bind(name)
         .bind("deleted")
+        .fetch_optional(pool)
+        .await?;
+    maybe.map(map_artifact_entry).transpose()
+}
+
+pub async fn find_finalized_artifact_by_name(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    workflow_run_backend_id: &str,
+    name: &str,
+) -> Result<Option<ArtifactEntry>, sqlx::Error> {
+    let query = rewrite_placeholders(
+        "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE workflow_run_backend_id = ? AND name = ? AND state = ? ORDER BY created_at DESC LIMIT 1",
+        driver,
+    );
+    let maybe = sqlx::query(&query)
+        .bind(workflow_run_backend_id)
+        .bind(name)
+        .bind("finalized")
         .fetch_optional(pool)
         .await?;
     maybe.map(map_artifact_entry).transpose()
@@ -753,11 +770,10 @@ pub async fn list_artifact_entries(
     pool: &AnyPool,
     driver: DatabaseDriver,
     workflow_run_backend_id: &str,
-    workflow_job_run_backend_id: &str,
     name_filter: Option<&str>,
     id_filter: Option<i64>,
 ) -> Result<Vec<ArtifactEntry>, sqlx::Error> {
-    let base = "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE workflow_run_backend_id = ? AND workflow_job_run_backend_id = ? AND state = ?";
+    let base = "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE workflow_run_backend_id = ? AND state = ?";
     let sql = match (name_filter, id_filter) {
         (Some(_), Some(_)) => {
             format!("{base} AND name = ? AND numeric_id = ? ORDER BY created_at DESC")
@@ -769,7 +785,6 @@ pub async fn list_artifact_entries(
     let query = rewrite_placeholders(&sql, driver);
     let mut query = sqlx::query(&query)
         .bind(workflow_run_backend_id)
-        .bind(workflow_job_run_backend_id)
         .bind("finalized");
     if let Some(name_filter) = name_filter {
         query = query.bind(name_filter);

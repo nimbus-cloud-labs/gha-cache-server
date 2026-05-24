@@ -78,7 +78,7 @@ pub(crate) struct FinalizeArtifactReq {
     #[serde(alias = "workflowRunBackendId")]
     workflow_run_backend_id: String,
     #[serde(alias = "workflowJobRunBackendId")]
-    workflow_job_run_backend_id: String,
+    _workflow_job_run_backend_id: String,
     name: String,
     #[serde(default, deserialize_with = "deserialize_i64_from_string_or_number")]
     size: i64,
@@ -92,7 +92,7 @@ impl TryFrom<artifact::FinalizeArtifactRequest> for FinalizeArtifactReq {
     fn try_from(value: artifact::FinalizeArtifactRequest) -> Result<Self> {
         Ok(Self {
             workflow_run_backend_id: value.workflow_run_backend_id,
-            workflow_job_run_backend_id: value.workflow_job_run_backend_id,
+            _workflow_job_run_backend_id: value.workflow_job_run_backend_id,
             name: value.name,
             size: value.size,
             hash: value.hash,
@@ -121,7 +121,7 @@ pub(crate) struct ListArtifactsReq {
     #[serde(alias = "workflowRunBackendId")]
     workflow_run_backend_id: String,
     #[serde(alias = "workflowJobRunBackendId")]
-    workflow_job_run_backend_id: String,
+    _workflow_job_run_backend_id: String,
     #[serde(default, alias = "nameFilter")]
     name_filter: Option<String>,
     #[serde(
@@ -138,7 +138,7 @@ impl TryFrom<artifact::ListArtifactsRequest> for ListArtifactsReq {
     fn try_from(value: artifact::ListArtifactsRequest) -> Result<Self> {
         Ok(Self {
             workflow_run_backend_id: value.workflow_run_backend_id,
-            workflow_job_run_backend_id: value.workflow_job_run_backend_id,
+            _workflow_job_run_backend_id: value.workflow_job_run_backend_id,
             name_filter: value.name_filter,
             id_filter: value.id_filter,
         })
@@ -190,7 +190,7 @@ pub(crate) struct GetSignedArtifactUrlReq {
     #[serde(alias = "workflowRunBackendId")]
     workflow_run_backend_id: String,
     #[serde(alias = "workflowJobRunBackendId")]
-    workflow_job_run_backend_id: String,
+    _workflow_job_run_backend_id: String,
     name: String,
 }
 
@@ -200,7 +200,7 @@ impl TryFrom<artifact::GetSignedArtifactUrlRequest> for GetSignedArtifactUrlReq 
     fn try_from(value: artifact::GetSignedArtifactUrlRequest) -> Result<Self> {
         Ok(Self {
             workflow_run_backend_id: value.workflow_run_backend_id,
-            workflow_job_run_backend_id: value.workflow_job_run_backend_id,
+            _workflow_job_run_backend_id: value.workflow_job_run_backend_id,
             name: value.name,
         })
     }
@@ -225,7 +225,7 @@ pub(crate) struct DeleteArtifactReq {
     #[serde(alias = "workflowRunBackendId")]
     workflow_run_backend_id: String,
     #[serde(alias = "workflowJobRunBackendId")]
-    workflow_job_run_backend_id: String,
+    _workflow_job_run_backend_id: String,
     name: String,
 }
 
@@ -235,7 +235,7 @@ impl TryFrom<artifact::DeleteArtifactRequest> for DeleteArtifactReq {
     fn try_from(value: artifact::DeleteArtifactRequest) -> Result<Self> {
         Ok(Self {
             workflow_run_backend_id: value.workflow_run_backend_id,
-            workflow_job_run_backend_id: value.workflow_job_run_backend_id,
+            _workflow_job_run_backend_id: value.workflow_job_run_backend_id,
             name: value.name,
         })
     }
@@ -272,7 +272,6 @@ pub(crate) async fn create_artifact(
         &st.pool,
         st.database_driver,
         &req.workflow_run_backend_id,
-        &req.workflow_job_run_backend_id,
         &req.name,
     )
     .await?
@@ -461,7 +460,6 @@ pub(crate) async fn finalize_artifact(
         &st.pool,
         st.database_driver,
         &req.workflow_run_backend_id,
-        &req.workflow_job_run_backend_id,
         &req.name,
     )
     .await?
@@ -534,7 +532,6 @@ pub(crate) async fn list_artifacts(
         &st.pool,
         st.database_driver,
         &req.workflow_run_backend_id,
-        &req.workflow_job_run_backend_id,
         req.name_filter.as_deref(),
         req.id_filter,
     )
@@ -553,20 +550,16 @@ pub(crate) async fn get_signed_artifact_url(
     request: TwirpRequest<GetSignedArtifactUrlReq, artifact::GetSignedArtifactUrlRequest>,
 ) -> Result<TwirpResponse<GetSignedArtifactUrlResp, artifact::GetSignedArtifactUrlResponse>> {
     let (req, format, origin) = request.into_parts();
-    let Some(entry) = meta::find_active_artifact_by_name(
+    let Some(entry) = meta::find_finalized_artifact_by_name(
         &st.pool,
         st.database_driver,
         &req.workflow_run_backend_id,
-        &req.workflow_job_run_backend_id,
         &req.name,
     )
     .await?
     else {
         return Err(ApiError::NotFound);
     };
-    if entry.state != "finalized" {
-        return Err(ApiError::NotFound);
-    }
 
     let signed_url = if st.enable_direct {
         let presigned = st
@@ -639,7 +632,6 @@ pub(crate) async fn delete_artifact(
         &st.pool,
         st.database_driver,
         &req.workflow_run_backend_id,
-        &req.workflow_job_run_backend_id,
         &req.name,
     )
     .await?

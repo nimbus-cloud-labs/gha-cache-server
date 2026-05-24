@@ -98,7 +98,9 @@ Response:
 }
 ```
 
-Only finalized, non-deleted artifacts are listed.
+Only finalized, non-deleted artifacts are listed. Lookups are scoped to the
+workflow run backend identifier so artifacts uploaded by one job can be
+downloaded by later jobs in the same workflow run.
 
 ### `GetSignedArtifactURL`
 
