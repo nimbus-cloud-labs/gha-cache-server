@@ -5,7 +5,7 @@ LABEL org.opencontainers.image.source="https://github.com/n-cloud-labs/gha-cache
 WORKDIR /usr/src/gha-cache-server
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y build-essential cmake pkg-config protobuf-compiler sccache \
+    && apt-get install --no-install-recommends -y build-essential cmake pkg-config protobuf-compiler libprotobuf-dev sccache \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a dummy project to leverage Docker layer caching for dependencies
