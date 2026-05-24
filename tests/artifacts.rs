@@ -346,3 +346,49 @@ async fn artifact_block_blob_upload_commits_block_list_order() -> Result<()> {
 
     server.stop().await
 }
+
+#[tokio::test]
+async fn artifact_block_upload_accepts_large_numeric_block_suffix() -> Result<()> {
+    let server = TestServer::start().await?;
+    let client = Client::new();
+
+    let create: CreateArtifactResponse = client
+        .post(server.artifact_endpoint("CreateArtifact"))
+        .header("content-type", "application/json")
+        .json(&json!({
+            "workflowRunBackendId": "run-3",
+            "workflowJobRunBackendId": "job-3",
+            "name": "large-suffix",
+            "version": 4
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let block_id = general_purpose::STANDARD.encode("block-999999999999999999999999999999");
+    client
+        .put(format!(
+            "{}?comp=block&blockid={}",
+            create.signed_upload_url, block_id
+        ))
+        .body("payload".as_bytes().to_vec())
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let block_list = format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><BlockList><Latest>{}</Latest></BlockList>",
+        block_id
+    );
+    client
+        .put(format!("{}?comp=blocklist", create.signed_upload_url))
+        .header("content-type", "application/xml")
+        .body(block_list)
+        .send()
+        .await?
+        .error_for_status()?;
+
+    server.stop().await
+}

@@ -396,12 +396,11 @@ async fn put_artifact_block(
 ) -> Result<Response> {
     let decoded_block_id = validate_block_id(block_id)?;
     let size = parse_content_length(&headers)?;
-    let part_number = block_id_part_number(&decoded_block_id)
-        .transpose()?
-        .unwrap_or(
-            meta::next_artifact_part_number(&st.pool, st.database_driver, upload_id, block_id)
-                .await?,
-        );
+    let part_number = if let Some(part_number) = block_id_part_number(&decoded_block_id) {
+        part_number
+    } else {
+        meta::next_artifact_part_number(&st.pool, st.database_driver, upload_id, block_id).await?
+    };
     let payload = body_to_blob_payload(body);
     let etag = st
         .store
@@ -762,7 +761,7 @@ fn validate_block_id(block_id: &str) -> Result<Vec<u8>> {
         .map_err(|_| ApiError::BadRequest("blockid must be base64 encoded".into()))
 }
 
-fn block_id_part_number(decoded: &[u8]) -> Option<Result<i32>> {
+fn block_id_part_number(decoded: &[u8]) -> Option<i32> {
     let end = decoded
         .iter()
         .rposition(|byte| byte.is_ascii_digit())
@@ -773,13 +772,8 @@ fn block_id_part_number(decoded: &[u8]) -> Option<Result<i32>> {
         .map(|index| index + 1)
         .unwrap_or(0);
     let digits = std::str::from_utf8(&decoded[start..end]).ok()?;
-    Some(
-        digits
-            .parse::<i32>()
-            .ok()
-            .and_then(|number| number.checked_add(1))
-            .ok_or_else(|| ApiError::BadRequest("blockid numeric suffix is too large".into())),
-    )
+    let number = digits.parse::<i32>().ok()?;
+    Some(number.max(1))
 }
 
 fn parse_block_list(body: &[u8]) -> Result<Vec<String>> {
