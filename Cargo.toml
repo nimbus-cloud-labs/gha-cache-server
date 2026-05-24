@@ -40,6 +40,8 @@ once_cell = { version = "1" }
 percent-encoding = { version = "2" }
 pin-project-lite = { version = "0.2" }
 prost = { version = "0.14" }
+prost-types = { version = "0.14" }
+quick-xml = { version = "0.38" }
 rand = { version = "0.10" }
 rsa = { version = "0.9", features = ["sha2"] }
 rustls = { version = "0.23.32" }

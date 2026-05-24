@@ -97,6 +97,110 @@ pub struct CacheGeneration {
     pub current: i64,
 }
 
+/// Captures an artifact entry row loaded from the metadata database.
+///
+/// Artifact entries model the GitHub Actions results service artifact metadata
+/// independently from cache entries. They are addressed by workflow run/job
+/// backend identifiers plus an artifact name and point to a ZIP payload stored
+/// in the configured blob backend.
+///
+/// # Examples
+/// ```
+/// use chrono::{DateTime, Utc};
+/// use gha_cache_server::meta::ArtifactEntry;
+/// use uuid::Uuid;
+///
+/// let timestamp = DateTime::<Utc>::from_timestamp(0, 0).expect("valid timestamp");
+/// let entry = ArtifactEntry {
+///     id: Uuid::nil(),
+///     numeric_id: 1,
+///     workflow_run_backend_id: "run".into(),
+///     workflow_job_run_backend_id: "job".into(),
+///     name: "logs".into(),
+///     version: 4,
+///     size_bytes: 128,
+///     hash: Some("sha256:abc".into()),
+///     storage_key: "artifacts/run/job/logs.zip".into(),
+///     state: "finalized".into(),
+///     expires_at: None,
+///     created_at: timestamp,
+///     updated_at: timestamp,
+/// };
+/// assert_eq!(entry.name, "logs");
+/// ```
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ArtifactEntry {
+    pub id: Uuid,
+    pub numeric_id: i64,
+    pub workflow_run_backend_id: String,
+    pub workflow_job_run_backend_id: String,
+    pub name: String,
+    pub version: i64,
+    pub size_bytes: i64,
+    pub hash: Option<String>,
+    pub storage_key: String,
+    pub state: String,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Captures an artifact upload row loaded from the metadata database.
+///
+/// The upload row links one results-service artifact to the backend multipart
+/// upload session used to receive the ZIP payload.
+///
+/// # Examples
+/// ```
+/// use gha_cache_server::meta::ArtifactUploadRow;
+/// use uuid::Uuid;
+///
+/// let row = ArtifactUploadRow {
+///     id: Uuid::nil(),
+///     artifact_id: Uuid::nil(),
+///     upload_id: "upload".into(),
+///     state: "reserved".into(),
+///     etag: None,
+///     size_bytes: 0,
+/// };
+/// assert_eq!(row.upload_id, "upload");
+/// ```
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ArtifactUploadRow {
+    pub id: Uuid,
+    pub artifact_id: Uuid,
+    pub upload_id: String,
+    pub state: String,
+    pub etag: Option<String>,
+    pub size_bytes: i64,
+}
+
+/// Describes one uploaded artifact block.
+///
+/// Artifact block records preserve the Azure block identifier supplied by the
+/// client and map it to the backend multipart part number used by the blob
+/// store.
+///
+/// # Examples
+/// ```
+/// use gha_cache_server::meta::ArtifactUploadPartRecord;
+///
+/// let part = ArtifactUploadPartRecord {
+///     block_id: "block".into(),
+///     part_number: 1,
+///     size: 1024,
+///     etag: "etag".into(),
+/// };
+/// assert_eq!(part.part_number, 1);
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ArtifactUploadPartRecord {
+    pub block_id: String,
+    pub part_number: i32,
+    pub size: i64,
+    pub etag: String,
+}
+
 fn parse_uuid(value: String) -> sqlx::Result<Uuid> {
     Uuid::parse_str(&value).map_err(|err| sqlx::Error::Decode(Box::new(err)))
 }
@@ -190,6 +294,59 @@ fn map_upload_row(row: sqlx::any::AnyRow) -> Result<UploadRow, sqlx::Error> {
         state: row.try_get("state")?,
         active_part_count: row.try_get("active_part_count")?,
         pending_finalize: try_get_bool(&row, "pending_finalize")?,
+    })
+}
+
+fn map_artifact_entry(row: sqlx::any::AnyRow) -> Result<ArtifactEntry, sqlx::Error> {
+    let id = parse_uuid(row.try_get::<String, _>("id")?)?;
+    let created_at = timestamp_to_datetime(row.try_get::<i64, _>("created_at")?)?;
+    let updated_at = timestamp_to_datetime(row.try_get::<i64, _>("updated_at")?)?;
+    let expires_at = row
+        .try_get::<Option<i64>, _>("expires_at")?
+        .map(timestamp_to_datetime)
+        .transpose()?;
+
+    Ok(ArtifactEntry {
+        id,
+        numeric_id: row.try_get("numeric_id")?,
+        workflow_run_backend_id: row.try_get("workflow_run_backend_id")?,
+        workflow_job_run_backend_id: row.try_get("workflow_job_run_backend_id")?,
+        name: row.try_get("name")?,
+        version: row.try_get("version")?,
+        size_bytes: row.try_get("size_bytes")?,
+        hash: row.try_get("hash")?,
+        storage_key: row.try_get("storage_key")?,
+        state: row.try_get("state")?,
+        expires_at,
+        created_at,
+        updated_at,
+    })
+}
+
+fn map_artifact_upload_row(row: sqlx::any::AnyRow) -> Result<ArtifactUploadRow, sqlx::Error> {
+    Ok(ArtifactUploadRow {
+        id: parse_uuid(row.try_get::<String, _>("id")?)?,
+        artifact_id: parse_uuid(row.try_get::<String, _>("artifact_id")?)?,
+        upload_id: row.try_get("upload_id")?,
+        state: row.try_get("state")?,
+        etag: row.try_get("etag")?,
+        size_bytes: row.try_get("size_bytes")?,
+    })
+}
+
+fn map_artifact_upload_part(
+    row: sqlx::any::AnyRow,
+) -> Result<ArtifactUploadPartRecord, sqlx::Error> {
+    Ok(ArtifactUploadPartRecord {
+        block_id: row.try_get("block_id")?,
+        part_number: i32::try_from(row.try_get::<i64, _>("part_number")?).map_err(|err| {
+            sqlx::Error::Decode(Box::new(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid artifact part number: {err}"),
+            )))
+        })?,
+        size: row.try_get("size")?,
+        etag: row.try_get("etag")?,
     })
 }
 
@@ -506,6 +663,421 @@ pub async fn rotate_generation_and_clear_entries(
     tx.commit().await?;
 
     Ok(CacheGeneration { previous, current })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Artifact creation receives all results-service identity fields"
+)]
+pub async fn create_artifact_entry(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    workflow_run_backend_id: &str,
+    workflow_job_run_backend_id: &str,
+    name: &str,
+    version: i64,
+    storage_key: &str,
+    expires_at: Option<DateTime<Utc>>,
+) -> Result<ArtifactEntry, sqlx::Error> {
+    let id = Uuid::new_v4();
+    let expires_at = expires_at.map(|value| value.timestamp());
+    let now = Utc::now().timestamp();
+    let insert_query = rewrite_placeholders(
+        "INSERT INTO artifact_entries (id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, storage_key, state, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        driver,
+    );
+
+    loop {
+        let numeric_id = generate_cache_numeric_id();
+        let result = sqlx::query(&insert_query)
+            .bind(id.to_string())
+            .bind(numeric_id)
+            .bind(workflow_run_backend_id)
+            .bind(workflow_job_run_backend_id)
+            .bind(name)
+            .bind(version)
+            .bind(storage_key)
+            .bind("created")
+            .bind(expires_at)
+            .bind(now)
+            .bind(now)
+            .execute(pool)
+            .await;
+
+        match result {
+            Ok(_) => return fetch_artifact_entry(pool, driver, id).await,
+            Err(sqlx::Error::Database(db_err)) if db_err.is_unique_violation() => continue,
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+pub async fn fetch_artifact_entry(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    id: Uuid,
+) -> Result<ArtifactEntry, sqlx::Error> {
+    let query = rewrite_placeholders(
+        "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE id = ?",
+        driver,
+    );
+    let row = sqlx::query(&query)
+        .bind(id.to_string())
+        .fetch_one(pool)
+        .await?;
+    map_artifact_entry(row)
+}
+
+pub async fn find_active_artifact_by_name(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    workflow_run_backend_id: &str,
+    workflow_job_run_backend_id: &str,
+    name: &str,
+) -> Result<Option<ArtifactEntry>, sqlx::Error> {
+    let query = rewrite_placeholders(
+        "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE workflow_run_backend_id = ? AND workflow_job_run_backend_id = ? AND name = ? AND state != ? ORDER BY created_at DESC LIMIT 1",
+        driver,
+    );
+    let maybe = sqlx::query(&query)
+        .bind(workflow_run_backend_id)
+        .bind(workflow_job_run_backend_id)
+        .bind(name)
+        .bind("deleted")
+        .fetch_optional(pool)
+        .await?;
+    maybe.map(map_artifact_entry).transpose()
+}
+
+pub async fn list_artifact_entries(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    workflow_run_backend_id: &str,
+    workflow_job_run_backend_id: &str,
+    name_filter: Option<&str>,
+    id_filter: Option<i64>,
+) -> Result<Vec<ArtifactEntry>, sqlx::Error> {
+    let base = "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE workflow_run_backend_id = ? AND workflow_job_run_backend_id = ? AND state = ?";
+    let sql = match (name_filter, id_filter) {
+        (Some(_), Some(_)) => {
+            format!("{base} AND name = ? AND numeric_id = ? ORDER BY created_at DESC")
+        }
+        (Some(_), None) => format!("{base} AND name = ? ORDER BY created_at DESC"),
+        (None, Some(_)) => format!("{base} AND numeric_id = ? ORDER BY created_at DESC"),
+        (None, None) => format!("{base} ORDER BY created_at DESC"),
+    };
+    let query = rewrite_placeholders(&sql, driver);
+    let mut query = sqlx::query(&query)
+        .bind(workflow_run_backend_id)
+        .bind(workflow_job_run_backend_id)
+        .bind("finalized");
+    if let Some(name_filter) = name_filter {
+        query = query.bind(name_filter);
+    }
+    if let Some(id_filter) = id_filter {
+        query = query.bind(id_filter);
+    }
+
+    let rows = query.fetch_all(pool).await?;
+    rows.into_iter().map(map_artifact_entry).collect()
+}
+
+pub async fn expired_artifact_entries(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    now: DateTime<Utc>,
+) -> Result<Vec<ArtifactEntry>, sqlx::Error> {
+    let query = rewrite_placeholders(
+        "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE expires_at IS NOT NULL AND expires_at < ? AND state != ? ORDER BY expires_at ASC",
+        driver,
+    );
+    let rows = sqlx::query(&query)
+        .bind(now.timestamp())
+        .bind("deleted")
+        .fetch_all(pool)
+        .await?;
+    rows.into_iter().map(map_artifact_entry).collect()
+}
+
+pub async fn remove_artifact_entry(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    artifact_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    let query = rewrite_placeholders("DELETE FROM artifact_entries WHERE id = ?", driver);
+    sqlx::query(&query)
+        .bind(artifact_id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn upsert_artifact_upload(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    artifact_id: Uuid,
+    upload_id: &str,
+) -> Result<ArtifactUploadRow, sqlx::Error> {
+    let id = Uuid::new_v4();
+    let insert_query = rewrite_placeholders(
+        "INSERT INTO artifact_uploads (id, artifact_id, upload_id, state) VALUES (?, ?, ?, ?)",
+        driver,
+    );
+    sqlx::query(&insert_query)
+        .bind(id.to_string())
+        .bind(artifact_id.to_string())
+        .bind(upload_id)
+        .bind("reserved")
+        .execute(pool)
+        .await?;
+
+    fetch_artifact_upload(pool, driver, artifact_id).await
+}
+
+pub async fn fetch_artifact_upload(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    artifact_id: Uuid,
+) -> Result<ArtifactUploadRow, sqlx::Error> {
+    let query = rewrite_placeholders(
+        "SELECT id, artifact_id, upload_id, state, etag, size_bytes FROM artifact_uploads WHERE artifact_id = ?",
+        driver,
+    );
+    let row = sqlx::query(&query)
+        .bind(artifact_id.to_string())
+        .fetch_one(pool)
+        .await?;
+    map_artifact_upload_row(row)
+}
+
+pub async fn next_artifact_part_number(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    upload_id: &str,
+    block_id: &str,
+) -> Result<i32, sqlx::Error> {
+    let existing_query = rewrite_placeholders(
+        "SELECT part_number FROM artifact_upload_parts WHERE upload_id = ? AND block_id = ?",
+        driver,
+    );
+    if let Some(existing) = sqlx::query_scalar::<_, i64>(&existing_query)
+        .bind(upload_id)
+        .bind(block_id)
+        .fetch_optional(pool)
+        .await?
+    {
+        return i32::try_from(existing).map_err(|err| {
+            sqlx::Error::Decode(Box::new(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid artifact part number: {err}"),
+            )))
+        });
+    }
+
+    let max_query = rewrite_placeholders(
+        "SELECT COALESCE(MAX(part_number), 0) FROM artifact_upload_parts WHERE upload_id = ?",
+        driver,
+    );
+    let max = sqlx::query_scalar::<_, i64>(&max_query)
+        .bind(upload_id)
+        .fetch_one(pool)
+        .await?;
+    i32::try_from(max + 1).map_err(|err| {
+        sqlx::Error::Decode(Box::new(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid artifact part number: {err}"),
+        )))
+    })
+}
+
+pub async fn record_artifact_part(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    upload_id: &str,
+    block_id: &str,
+    part_number: i32,
+    size: i64,
+    etag: &str,
+) -> Result<(), sqlx::Error> {
+    let now = Utc::now().timestamp();
+    let insert_query = rewrite_placeholders(
+        "INSERT INTO artifact_upload_parts (upload_id, block_id, part_number, size, etag, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        driver,
+    );
+    let insert = sqlx::query(&insert_query)
+        .bind(upload_id)
+        .bind(block_id)
+        .bind(i64::from(part_number))
+        .bind(size)
+        .bind(etag)
+        .bind(now)
+        .bind(now)
+        .execute(pool)
+        .await;
+
+    match insert {
+        Ok(_) => Ok(()),
+        Err(sqlx::Error::Database(db_err)) if db_err.is_unique_violation() => {
+            let update_query = rewrite_placeholders(
+                "UPDATE artifact_upload_parts SET part_number = ?, size = ?, etag = ?, updated_at = ? WHERE upload_id = ? AND block_id = ?",
+                driver,
+            );
+            sqlx::query(&update_query)
+                .bind(i64::from(part_number))
+                .bind(size)
+                .bind(etag)
+                .bind(now)
+                .bind(upload_id)
+                .bind(block_id)
+                .execute(pool)
+                .await?;
+            Ok(())
+        }
+        Err(err) => Err(err),
+    }
+}
+
+pub async fn artifact_parts_by_block_ids(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    upload_id: &str,
+    block_ids: &[String],
+) -> Result<Vec<ArtifactUploadPartRecord>, sqlx::Error> {
+    let query = rewrite_placeholders(
+        "SELECT block_id, part_number, size, etag FROM artifact_upload_parts WHERE upload_id = ? AND block_id = ?",
+        driver,
+    );
+    let mut parts = Vec::with_capacity(block_ids.len());
+    for block_id in block_ids {
+        let row = sqlx::query(&query)
+            .bind(upload_id)
+            .bind(block_id)
+            .fetch_one(pool)
+            .await?;
+        parts.push(map_artifact_upload_part(row)?);
+    }
+    Ok(parts)
+}
+
+pub async fn mark_artifact_uploaded(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    artifact_id: Uuid,
+    etag: &str,
+    size_bytes: i64,
+) -> Result<(), sqlx::Error> {
+    let now = Utc::now().timestamp();
+    let update_upload = rewrite_placeholders(
+        "UPDATE artifact_uploads SET state = ?, etag = ?, size_bytes = ?, updated_at = ? WHERE artifact_id = ?",
+        driver,
+    );
+    sqlx::query(&update_upload)
+        .bind("uploaded")
+        .bind(etag)
+        .bind(size_bytes)
+        .bind(now)
+        .bind(artifact_id.to_string())
+        .execute(pool)
+        .await?;
+
+    let update_entry = rewrite_placeholders(
+        "UPDATE artifact_entries SET state = ?, size_bytes = ?, updated_at = ? WHERE id = ?",
+        driver,
+    );
+    sqlx::query(&update_entry)
+        .bind("uploading")
+        .bind(size_bytes)
+        .bind(now)
+        .bind(artifact_id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn mark_artifact_multipart_committed(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    artifact_id: Uuid,
+    size_bytes: i64,
+) -> Result<(), sqlx::Error> {
+    let now = Utc::now().timestamp();
+    let update_upload = rewrite_placeholders(
+        "UPDATE artifact_uploads SET state = ?, size_bytes = ?, updated_at = ? WHERE artifact_id = ?",
+        driver,
+    );
+    sqlx::query(&update_upload)
+        .bind("completed")
+        .bind(size_bytes)
+        .bind(now)
+        .bind(artifact_id.to_string())
+        .execute(pool)
+        .await?;
+
+    let update_entry = rewrite_placeholders(
+        "UPDATE artifact_entries SET state = ?, size_bytes = ?, updated_at = ? WHERE id = ?",
+        driver,
+    );
+    sqlx::query(&update_entry)
+        .bind("uploading")
+        .bind(size_bytes)
+        .bind(now)
+        .bind(artifact_id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn finalize_artifact_entry(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    artifact_id: Uuid,
+    size_bytes: i64,
+    hash: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    let now = Utc::now().timestamp();
+    let update_entry = rewrite_placeholders(
+        "UPDATE artifact_entries SET state = ?, size_bytes = ?, hash = ?, updated_at = ? WHERE id = ?",
+        driver,
+    );
+    sqlx::query(&update_entry)
+        .bind("finalized")
+        .bind(size_bytes)
+        .bind(hash)
+        .bind(now)
+        .bind(artifact_id.to_string())
+        .execute(pool)
+        .await?;
+
+    let update_upload = rewrite_placeholders(
+        "UPDATE artifact_uploads SET state = ?, updated_at = ? WHERE artifact_id = ?",
+        driver,
+    );
+    sqlx::query(&update_upload)
+        .bind("completed")
+        .bind(now)
+        .bind(artifact_id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn delete_artifact_entry(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    artifact_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    let now = Utc::now().timestamp();
+    let query = rewrite_placeholders(
+        "UPDATE artifact_entries SET state = ?, updated_at = ? WHERE id = ?",
+        driver,
+    );
+    sqlx::query(&query)
+        .bind("deleted")
+        .bind(now)
+        .bind(artifact_id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 #[expect(

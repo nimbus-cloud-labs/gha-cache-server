@@ -4,6 +4,7 @@
 //! shims exposed to API consumers. Submodules provide endpoint-specific
 //! handlers, protobuf bindings, and helpers for translating Twirp payloads into
 //! the internal domain types used by the server.
+pub mod artifact;
 pub mod download;
 pub mod path;
 pub mod proto;

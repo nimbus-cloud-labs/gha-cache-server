@@ -7,7 +7,7 @@ use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, error, info, warn};
 
 use crate::config::{CleanupSettings, DatabaseDriver};
-use crate::meta::{self, CacheEntry};
+use crate::meta::{self, ArtifactEntry, CacheEntry};
 use crate::storage::{BlobStore, generation_prefix};
 
 pub async fn run_cleanup_loop(
@@ -51,6 +51,29 @@ async fn run_iteration(
                     storage_key = %entry.storage_key,
                     ?err,
                     "failed to delete expired cache entry"
+                );
+            }
+        }
+    }
+
+    let expired_artifacts = meta::expired_artifact_entries(pool, driver, now).await?;
+    if !expired_artifacts.is_empty() {
+        info!(
+            count = expired_artifacts.len(),
+            "removing expired artifact entries"
+        );
+    }
+    for entry in expired_artifacts {
+        match purge_artifact(&store, pool, driver, &entry).await {
+            Ok(()) => {
+                debug!(artifact_id = %entry.id, "deleted expired artifact entry");
+            }
+            Err(err) => {
+                error!(
+                    artifact_id = %entry.id,
+                    storage_key = %entry.storage_key,
+                    ?err,
+                    "failed to delete expired artifact entry"
                 );
             }
         }
@@ -114,6 +137,22 @@ async fn purge_entry(
     meta::delete_entry(pool, driver, entry.id)
         .await
         .with_context(|| format!("failed to delete metadata for entry {}", entry.id))?;
+    Ok(())
+}
+
+async fn purge_artifact(
+    store: &Arc<dyn BlobStore>,
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    entry: &ArtifactEntry,
+) -> anyhow::Result<()> {
+    store
+        .delete(&entry.storage_key)
+        .await
+        .with_context(|| format!("failed to delete blob {}", entry.storage_key))?;
+    meta::remove_artifact_entry(pool, driver, entry.id)
+        .await
+        .with_context(|| format!("failed to delete metadata for artifact {}", entry.id))?;
     Ok(())
 }
 

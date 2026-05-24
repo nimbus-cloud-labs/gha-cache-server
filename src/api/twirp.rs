@@ -23,13 +23,13 @@ use crate::http::AppState;
 use crate::meta;
 
 #[derive(Clone, Debug)]
-struct RequestOrigin {
+pub(crate) struct RequestOrigin {
     scheme: String,
     authority: String,
 }
 
 impl RequestOrigin {
-    fn absolute(&self, path: &str) -> String {
+    pub(crate) fn absolute(&self, path: &str) -> String {
         format!("{}://{}{}", self.scheme, self.authority, path)
     }
 
@@ -93,7 +93,7 @@ fn unique_keys(primary: String, restores: &[String]) -> Vec<String> {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum TwirpFormat {
+pub(crate) enum TwirpFormat {
     Json,
     Protobuf,
 }
@@ -106,7 +106,7 @@ pub struct TwirpRequest<T, P> {
 }
 
 impl<T, P> TwirpRequest<T, P> {
-    fn into_parts(self) -> (T, TwirpFormat, RequestOrigin) {
+    pub(crate) fn into_parts(self) -> (T, TwirpFormat, RequestOrigin) {
         (self.data, self.format, self.origin)
     }
 
@@ -220,7 +220,7 @@ pub struct TwirpResponse<T, P> {
 }
 
 impl<T, P> TwirpResponse<T, P> {
-    fn new(data: T, format: TwirpFormat) -> Self {
+    pub(crate) fn new(data: T, format: TwirpFormat) -> Self {
         Self {
             data,
             format,

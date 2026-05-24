@@ -1,4 +1,4 @@
-use crate::api::{download, proxy, twirp, upload, upload_compat};
+use crate::api::{artifact, download, proxy, twirp, upload, upload_compat};
 use crate::config::{Config, DatabaseDriver};
 use crate::storage::BlobStore;
 use axum::{
@@ -85,6 +85,35 @@ pub(crate) fn build_router_with_proxy(
         .route(
             "/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL",
             post(twirp::get_cache_entry_download_url),
+        )
+        // Artifact service endpoints used by actions/upload-artifact v4+.
+        .route(
+            "/twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact",
+            post(artifact::create_artifact),
+        )
+        .route(
+            "/twirp/github.actions.results.api.v1.ArtifactService/FinalizeArtifact",
+            post(artifact::finalize_artifact),
+        )
+        .route(
+            "/twirp/github.actions.results.api.v1.ArtifactService/ListArtifacts",
+            post(artifact::list_artifacts),
+        )
+        .route(
+            "/twirp/github.actions.results.api.v1.ArtifactService/GetSignedArtifactURL",
+            post(artifact::get_signed_artifact_url),
+        )
+        .route(
+            "/twirp/github.actions.results.api.v1.ArtifactService/DeleteArtifact",
+            post(artifact::delete_artifact),
+        )
+        .route(
+            "/artifact-upload/{artifact_id}",
+            put(artifact::put_artifact),
+        )
+        .route(
+            "/artifact-download/{artifact_id}/{filename}",
+            get(artifact::download_artifact),
         )
         // 3) PUT /upload/{cache-id}
         .route("/upload/{cache_id}", put(upload_compat::put_upload))
