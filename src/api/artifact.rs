@@ -77,7 +77,11 @@ impl From<CreateArtifactResp> for artifact::CreateArtifactResponse {
 pub(crate) struct FinalizeArtifactReq {
     #[serde(alias = "workflowRunBackendId")]
     workflow_run_backend_id: String,
-    #[serde(alias = "workflowJobRunBackendId")]
+    #[serde(
+        default,
+        rename = "workflow_job_run_backend_id",
+        alias = "workflowJobRunBackendId"
+    )]
     _workflow_job_run_backend_id: String,
     name: String,
     #[serde(default, deserialize_with = "deserialize_i64_from_string_or_number")]
@@ -120,7 +124,11 @@ impl From<FinalizeArtifactResp> for artifact::FinalizeArtifactResponse {
 pub(crate) struct ListArtifactsReq {
     #[serde(alias = "workflowRunBackendId")]
     workflow_run_backend_id: String,
-    #[serde(alias = "workflowJobRunBackendId")]
+    #[serde(
+        default,
+        rename = "workflow_job_run_backend_id",
+        alias = "workflowJobRunBackendId"
+    )]
     _workflow_job_run_backend_id: String,
     #[serde(default, alias = "nameFilter")]
     name_filter: Option<String>,
@@ -189,7 +197,11 @@ impl From<ListArtifact> for artifact::list_artifacts_response::MonolithArtifact 
 pub(crate) struct GetSignedArtifactUrlReq {
     #[serde(alias = "workflowRunBackendId")]
     workflow_run_backend_id: String,
-    #[serde(alias = "workflowJobRunBackendId")]
+    #[serde(
+        default,
+        rename = "workflow_job_run_backend_id",
+        alias = "workflowJobRunBackendId"
+    )]
     _workflow_job_run_backend_id: String,
     name: String,
 }
@@ -224,7 +236,11 @@ impl From<GetSignedArtifactUrlResp> for artifact::GetSignedArtifactUrlResponse {
 pub(crate) struct DeleteArtifactReq {
     #[serde(alias = "workflowRunBackendId")]
     workflow_run_backend_id: String,
-    #[serde(alias = "workflowJobRunBackendId")]
+    #[serde(
+        default,
+        rename = "workflow_job_run_backend_id",
+        alias = "workflowJobRunBackendId"
+    )]
     _workflow_job_run_backend_id: String,
     name: String,
 }
