@@ -8,11 +8,13 @@ RUN apt-get update \
     && apt-get install --no-install-recommends -y build-essential cmake pkg-config protobuf-compiler libprotobuf-dev sccache \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a dummy project to leverage Docker layer caching for dependencies
-COPY Cargo.toml Cargo.lock ./
+# Create a dummy project to leverage Docker layer caching for dependencies.
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY proto ./proto
 RUN mkdir src \
+    && echo "" > src/lib.rs \
     && echo "fn main() {}" > src/main.rs \
-    && cargo build --release --locked
+    && cargo build --release --locked --lib --bin gha-cache-server
 
 # Copy the full source tree and build the release binary
 COPY . .

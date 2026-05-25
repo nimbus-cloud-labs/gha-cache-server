@@ -22,6 +22,8 @@ jobs:
       contents: read
       packages: write
       id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
 
     steps:
       - uses: actions/checkout@v5
@@ -38,11 +40,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+
       - name: Build and Push container images
+        id: build
         uses: docker/build-push-action@v6
         with:
           platforms: linux/amd64
-          push: false
+          tags: ghcr.io/${{ github.repository }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildkit
           cache-to: type=registry,mode=max,ref=ghcr.io/${{ github.repository }}:buildkit
 
@@ -53,6 +64,8 @@ jobs:
       contents: read
       packages: write
       id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
 
     steps:
       - uses: actions/checkout@v5
@@ -69,11 +82,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+
       - name: Build and Push container images
+        id: build
         uses: docker/build-push-action@v6
         with:
           platforms: linux/arm64
-          push: false
+          tags: ghcr.io/${{ github.repository }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildkit-arm
           cache-to: type=registry,mode=max,ref=ghcr.io/${{ github.repository }}:buildkit-arm
 
@@ -110,17 +132,18 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: |
-            type=registry,ref=ghcr.io/${{ github.repository }}:buildkit
-            type=registry,ref=ghcr.io/${{ github.repository }}:buildkit-arm
+      - name: Create multi-arch image tags
+        env:
+          SOURCE_AMD64: ghcr.io/${{ github.repository }}@${{ needs.build_package_amd64.outputs.digest }}
+          SOURCE_ARM64: ghcr.io/${{ github.repository }}@${{ needs.build_package_arm64.outputs.digest }}
+        run: |
+          set -euo pipefail
+          while read -r TAG; do
+            docker buildx imagetools create \
+              --tag "$TAG" \
+              "$SOURCE_AMD64" \
+              "$SOURCE_ARM64"
+          done <<< "$(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
 
       - name: Setup CRANE
         uses: imjasonh/setup-crane@v0.4
