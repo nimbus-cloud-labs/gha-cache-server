@@ -296,13 +296,23 @@ pub(crate) async fn create_artifact(
             return Err(ApiError::BadRequest("artifact already exists".into()));
         }
 
-        return Ok(TwirpResponse::new(
-            CreateArtifactResp {
-                ok: true,
-                signed_upload_url: origin.absolute(&format!("/artifact-upload/{}", existing.id)),
-            },
-            format,
-        ));
+        let upload = meta::fetch_artifact_upload(&st.pool, st.database_driver, existing.id).await?;
+        if existing.state == "created" && upload.state == "reserved" {
+            return Ok(TwirpResponse::new(
+                CreateArtifactResp {
+                    ok: true,
+                    signed_upload_url: origin
+                        .absolute(&format!("/artifact-upload/{}", existing.id)),
+                },
+                format,
+            ));
+        }
+
+        meta::delete_artifact_entry(&st.pool, st.database_driver, existing.id).await?;
+        st.store
+            .delete(&existing.storage_key)
+            .await
+            .map_err(|err| ApiError::S3(format!("{err}")))?;
     }
 
     let provisional_id = Uuid::new_v4();
@@ -566,16 +576,18 @@ pub(crate) async fn get_signed_artifact_url(
     request: TwirpRequest<GetSignedArtifactUrlReq, artifact::GetSignedArtifactUrlRequest>,
 ) -> Result<TwirpResponse<GetSignedArtifactUrlResp, artifact::GetSignedArtifactUrlResponse>> {
     let (req, format, origin) = request.into_parts();
-    let Some(entry) = meta::find_finalized_artifact_by_name(
+    let entry = meta::find_finalized_artifact_by_name(
         &st.pool,
         st.database_driver,
         &req.workflow_run_backend_id,
         &req.name,
     )
     .await?
-    else {
-        return Err(ApiError::NotFound);
-    };
+    .or(
+        meta::find_latest_finalized_artifact_by_name(&st.pool, st.database_driver, &req.name)
+            .await?,
+    )
+    .ok_or(ApiError::NotFound)?;
 
     let signed_url = if st.enable_direct {
         let presigned = st

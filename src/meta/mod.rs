@@ -766,6 +766,23 @@ pub async fn find_finalized_artifact_by_name(
     maybe.map(map_artifact_entry).transpose()
 }
 
+pub async fn find_latest_finalized_artifact_by_name(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    name: &str,
+) -> Result<Option<ArtifactEntry>, sqlx::Error> {
+    let query = rewrite_placeholders(
+        "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE name = ? AND state = ? ORDER BY created_at DESC LIMIT 1",
+        driver,
+    );
+    let maybe = sqlx::query(&query)
+        .bind(name)
+        .bind("finalized")
+        .fetch_optional(pool)
+        .await?;
+    maybe.map(map_artifact_entry).transpose()
+}
+
 pub async fn list_artifact_entries(
     pool: &AnyPool,
     driver: DatabaseDriver,
@@ -793,7 +810,21 @@ pub async fn list_artifact_entries(
         query = query.bind(id_filter);
     }
 
-    let rows = query.fetch_all(pool).await?;
+    let mut rows = query.fetch_all(pool).await?;
+    if let (true, Some(name_filter)) = (rows.is_empty(), name_filter) {
+        let base = "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE state = ? AND name = ?";
+        let sql = if id_filter.is_some() {
+            format!("{base} AND numeric_id = ? ORDER BY created_at DESC LIMIT 1")
+        } else {
+            format!("{base} ORDER BY created_at DESC LIMIT 1")
+        };
+        let query = rewrite_placeholders(&sql, driver);
+        let mut query = sqlx::query(&query).bind("finalized").bind(name_filter);
+        if let Some(id_filter) = id_filter {
+            query = query.bind(id_filter);
+        }
+        rows = query.fetch_all(pool).await?;
+    }
     rows.into_iter().map(map_artifact_entry).collect()
 }
 

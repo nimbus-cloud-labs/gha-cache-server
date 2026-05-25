@@ -212,7 +212,7 @@ async fn artifact_twirp_roundtrip_uses_local_storage() -> Result<()> {
         .post(server.artifact_endpoint("ListArtifacts"))
         .header("content-type", "application/json")
         .json(&json!({
-            "workflowRunBackendId": "run-1",
+            "workflowRunBackendId": "run-1-retry",
             "nameFilter": "logs"
         }))
         .send()
@@ -229,7 +229,7 @@ async fn artifact_twirp_roundtrip_uses_local_storage() -> Result<()> {
         .post(server.artifact_endpoint("GetSignedArtifactURL"))
         .header("content-type", "application/json")
         .json(&json!({
-            "workflowRunBackendId": "run-1",
+            "workflowRunBackendId": "run-1-retry",
             "workflowJobRunBackendId": "job-downloader",
             "name": "logs"
         }))
