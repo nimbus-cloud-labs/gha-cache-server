@@ -228,6 +228,44 @@ async fn artifact_twirp_roundtrip_uses_local_storage() -> Result<()> {
     assert_eq!(listed.artifacts[0].name, "logs");
     assert_eq!(listed.artifacts[0].size, payload.len() as i64);
 
+    let retry_create: CreateArtifactResponse = client
+        .post(server.artifact_endpoint("CreateArtifact"))
+        .header("content-type", "application/json")
+        .json(&json!({
+            "workflowRunBackendId": "run-1-retry",
+            "workflowJobRunBackendId": "job-retry",
+            "name": "retry-logs",
+            "version": 4
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    client
+        .put(&retry_create.signed_upload_url)
+        .header("content-type", "application/zip")
+        .body(b"retry artifact".to_vec())
+        .send()
+        .await?
+        .error_for_status()?;
+    let retry_finalized: FinalizeArtifactResponse = client
+        .post(server.artifact_endpoint("FinalizeArtifact"))
+        .header("content-type", "application/json")
+        .json(&json!({
+            "workflowRunBackendId": "run-1-retry",
+            "workflowJobRunBackendId": "job-retry",
+            "name": "retry-logs",
+            "size": 14,
+            "hash": "sha256:retry-artifact-test-digest"
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert!(retry_finalized.ok);
+
     let retry_pattern_list: ListArtifactsResponse = client
         .post(server.artifact_endpoint("ListArtifacts"))
         .header("content-type", "application/json")
@@ -239,11 +277,16 @@ async fn artifact_twirp_roundtrip_uses_local_storage() -> Result<()> {
         .error_for_status()?
         .json()
         .await?;
-    assert_eq!(retry_pattern_list.artifacts.len(), 1);
-    assert_eq!(
-        retry_pattern_list.artifacts[0].database_id,
-        finalized.artifact_id
-    );
+    assert_eq!(retry_pattern_list.artifacts.len(), 2);
+    let mut retry_pattern_ids = retry_pattern_list
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.database_id)
+        .collect::<Vec<_>>();
+    retry_pattern_ids.sort_unstable();
+    let mut expected_retry_pattern_ids = vec![finalized.artifact_id, retry_finalized.artifact_id];
+    expected_retry_pattern_ids.sort_unstable();
+    assert_eq!(retry_pattern_ids, expected_retry_pattern_ids);
 
     let retry_id_list: ListArtifactsResponse = client
         .post(server.artifact_endpoint("ListArtifacts"))

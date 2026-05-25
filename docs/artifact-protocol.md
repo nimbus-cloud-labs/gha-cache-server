@@ -102,10 +102,10 @@ Response:
 Only finalized, non-deleted artifacts are listed. Lookups are scoped to the
 workflow run backend identifier so artifacts uploaded by one job can be
 downloaded by later jobs in the same workflow run. When a retry job receives a
-new backend identifier and the scoped lookup is empty, unfiltered lists fall
-back to the newest finalized entry for each artifact name so client-side pattern
-filters can still find artifacts uploaded by the original attempt. Filtered
-retry lookups also fall back by artifact name or numeric artifact identifier.
+new backend identifier, unfiltered lists are merged with the newest finalized
+entry for each artifact name so client-side pattern filters can still find
+artifacts uploaded by the original attempt. Filtered retry lookups also fall
+back by artifact name or numeric artifact identifier.
 
 ### `GetSignedArtifactURL`
 

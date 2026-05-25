@@ -890,8 +890,19 @@ pub async fn list_artifact_entries(
         .into_iter()
         .map(map_artifact_entry)
         .collect::<Result<_, _>>()?;
-    if entries.is_empty() && name_filter.is_none() && id_filter.is_none() {
-        return list_latest_finalized_artifact_entries_by_name(pool, driver).await;
+    if name_filter.is_none() && id_filter.is_none() {
+        let mut entries = entries;
+        let mut seen = entries
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect::<HashSet<_>>();
+        entries.extend(
+            list_latest_finalized_artifact_entries_by_name(pool, driver)
+                .await?
+                .into_iter()
+                .filter(|entry| seen.insert(entry.name.clone())),
+        );
+        return Ok(entries);
     }
     Ok(entries)
 }
