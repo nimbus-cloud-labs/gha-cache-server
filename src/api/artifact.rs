@@ -419,17 +419,33 @@ async fn put_artifact_block(
     headers: HeaderMap,
     body: Body,
 ) -> Result<Response> {
-    let decoded_block_id = validate_block_id(block_id)?;
+    let _ = validate_block_id(block_id)?;
     let size = parse_content_length(&headers)?;
-    let part_number = if let Some(part_number) = block_id_part_number(&decoded_block_id) {
-        part_number
-    } else {
-        meta::next_artifact_part_number(&st.pool, st.database_driver, upload_id, block_id).await?
-    };
+    let part_number =
+        meta::next_artifact_part_number(&st.pool, st.database_driver, upload_id, block_id).await?;
+    let storage_key = artifact_block_storage_key(entry, upload_id, block_id);
+    let block_upload_id = st
+        .store
+        .create_multipart(&storage_key)
+        .await
+        .map_err(|err| ApiError::S3(format!("{err}")))?;
     let payload = body_to_blob_payload(body);
     let etag = st
         .store
-        .upload_part(&entry.storage_key, upload_id, part_number, payload)
+        .upload_part(
+            &storage_key,
+            &block_upload_id,
+            ARTIFACT_PART_NUMBER,
+            payload,
+        )
+        .await
+        .map_err(|err| ApiError::S3(format!("{err}")))?;
+    st.store
+        .complete_multipart(
+            &storage_key,
+            &block_upload_id,
+            vec![(ARTIFACT_PART_NUMBER, etag.clone())],
+        )
         .await
         .map_err(|err| ApiError::S3(format!("{err}")))?;
     meta::record_artifact_part(
@@ -440,6 +456,7 @@ async fn put_artifact_block(
         part_number,
         size,
         &etag,
+        &storage_key,
     )
     .await?;
     Ok(azure_created_response())
@@ -464,14 +481,41 @@ async fn put_artifact_block_list(
         meta::artifact_parts_by_block_ids(&st.pool, st.database_driver, upload_id, &block_ids)
             .await?;
     let total_size = records.iter().map(|part| part.size).sum();
-    let parts = records
-        .into_iter()
-        .map(|part| (part.part_number, part.etag))
-        .collect();
+    let mut final_parts = Vec::with_capacity(records.len());
+    let mut temporary_keys = Vec::with_capacity(records.len());
+    for (index, part) in records.into_iter().enumerate() {
+        let storage_key = part
+            .storage_key
+            .ok_or_else(|| ApiError::BadRequest("artifact block is missing storage".into()))?;
+        let Some(stream) = st
+            .store
+            .get(&storage_key)
+            .await
+            .map_err(|err| ApiError::S3(format!("{err}")))?
+        else {
+            return Err(ApiError::BadRequest(
+                "artifact block storage is missing".into(),
+            ));
+        };
+        let part_number = i32::try_from(index + 1)
+            .map_err(|_| ApiError::BadRequest("artifact has too many blocks".into()))?;
+        let etag = st
+            .store
+            .upload_part(&entry.storage_key, upload_id, part_number, stream)
+            .await
+            .map_err(|err| ApiError::S3(format!("{err}")))?;
+        final_parts.push((part_number, etag));
+        temporary_keys.push(storage_key);
+    }
     st.store
-        .complete_multipart(&entry.storage_key, upload_id, parts)
+        .complete_multipart(&entry.storage_key, upload_id, final_parts)
         .await
         .map_err(|err| ApiError::S3(format!("{err}")))?;
+    for storage_key in temporary_keys {
+        if let Err(err) = st.store.delete(&storage_key).await {
+            tracing::warn!(%storage_key, ?err, "failed to delete temporary artifact block");
+        }
+    }
     meta::mark_artifact_multipart_committed(&st.pool, st.database_driver, entry.id, total_size)
         .await?;
     Ok(azure_created_response())
@@ -732,6 +776,15 @@ fn artifact_filename(entry: &ArtifactEntry) -> String {
     format!("{}.zip", entry.name.replace(['/', '\\'], "_"))
 }
 
+fn artifact_block_storage_key(entry: &ArtifactEntry, upload_id: &str, block_id: &str) -> String {
+    format!(
+        "artifact-blocks/{}/{}/{}",
+        entry.id,
+        encode_path_segment(upload_id),
+        encode_path_segment(block_id)
+    )
+}
+
 fn entry_to_list_item(entry: ArtifactEntry) -> ListArtifact {
     ListArtifact {
         workflow_run_backend_id: entry.workflow_run_backend_id,
@@ -779,21 +832,6 @@ fn validate_block_id(block_id: &str) -> Result<Vec<u8>> {
     general_purpose::STANDARD
         .decode(block_id)
         .map_err(|_| ApiError::BadRequest("blockid must be base64 encoded".into()))
-}
-
-fn block_id_part_number(decoded: &[u8]) -> Option<i32> {
-    let end = decoded
-        .iter()
-        .rposition(|byte| byte.is_ascii_digit())
-        .map(|index| index + 1)?;
-    let start = decoded[..end]
-        .iter()
-        .rposition(|byte| !byte.is_ascii_digit())
-        .map(|index| index + 1)
-        .unwrap_or(0);
-    let digits = std::str::from_utf8(&decoded[start..end]).ok()?;
-    let number = digits.parse::<i32>().ok()?;
-    Some(number.max(1))
 }
 
 fn parse_block_list(body: &[u8]) -> Result<Vec<String>> {

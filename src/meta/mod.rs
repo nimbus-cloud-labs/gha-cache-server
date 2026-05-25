@@ -178,8 +178,8 @@ pub struct ArtifactUploadRow {
 /// Describes one uploaded artifact block.
 ///
 /// Artifact block records preserve the Azure block identifier supplied by the
-/// client and map it to the backend multipart part number used by the blob
-/// store.
+/// client and point to the temporary blob that stores the block payload until
+/// the block list defines the final artifact order.
 ///
 /// # Examples
 /// ```
@@ -190,6 +190,7 @@ pub struct ArtifactUploadRow {
 ///     part_number: 1,
 ///     size: 1024,
 ///     etag: "etag".into(),
+///     storage_key: Some("artifact-blocks/block".into()),
 /// };
 /// assert_eq!(part.part_number, 1);
 /// ```
@@ -199,6 +200,7 @@ pub struct ArtifactUploadPartRecord {
     pub part_number: i32,
     pub size: i64,
     pub etag: String,
+    pub storage_key: Option<String>,
 }
 
 fn parse_uuid(value: String) -> sqlx::Result<Uuid> {
@@ -347,6 +349,7 @@ fn map_artifact_upload_part(
         })?,
         size: row.try_get("size")?,
         etag: row.try_get("etag")?,
+        storage_key: row.try_get("storage_key")?,
     })
 }
 
@@ -936,6 +939,10 @@ pub async fn next_artifact_part_number(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Artifact part records are persisted from upload request fields"
+)]
 pub async fn record_artifact_part(
     pool: &AnyPool,
     driver: DatabaseDriver,
@@ -944,10 +951,11 @@ pub async fn record_artifact_part(
     part_number: i32,
     size: i64,
     etag: &str,
+    storage_key: &str,
 ) -> Result<(), sqlx::Error> {
     let now = Utc::now().timestamp();
     let insert_query = rewrite_placeholders(
-        "INSERT INTO artifact_upload_parts (upload_id, block_id, part_number, size, etag, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO artifact_upload_parts (upload_id, block_id, part_number, size, etag, storage_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         driver,
     );
     let insert = sqlx::query(&insert_query)
@@ -956,6 +964,7 @@ pub async fn record_artifact_part(
         .bind(i64::from(part_number))
         .bind(size)
         .bind(etag)
+        .bind(storage_key)
         .bind(now)
         .bind(now)
         .execute(pool)
@@ -965,13 +974,14 @@ pub async fn record_artifact_part(
         Ok(_) => Ok(()),
         Err(sqlx::Error::Database(db_err)) if db_err.is_unique_violation() => {
             let update_query = rewrite_placeholders(
-                "UPDATE artifact_upload_parts SET part_number = ?, size = ?, etag = ?, updated_at = ? WHERE upload_id = ? AND block_id = ?",
+                "UPDATE artifact_upload_parts SET part_number = ?, size = ?, etag = ?, storage_key = ?, updated_at = ? WHERE upload_id = ? AND block_id = ?",
                 driver,
             );
             sqlx::query(&update_query)
                 .bind(i64::from(part_number))
                 .bind(size)
                 .bind(etag)
+                .bind(storage_key)
                 .bind(now)
                 .bind(upload_id)
                 .bind(block_id)
@@ -990,7 +1000,7 @@ pub async fn artifact_parts_by_block_ids(
     block_ids: &[String],
 ) -> Result<Vec<ArtifactUploadPartRecord>, sqlx::Error> {
     let query = rewrite_placeholders(
-        "SELECT block_id, part_number, size, etag FROM artifact_upload_parts WHERE upload_id = ? AND block_id = ?",
+        "SELECT block_id, part_number, size, etag, storage_key FROM artifact_upload_parts WHERE upload_id = ? AND block_id = ?",
         driver,
     );
     let mut parts = Vec::with_capacity(block_ids.len());
