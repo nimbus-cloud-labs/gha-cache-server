@@ -864,17 +864,23 @@ pub async fn list_artifact_entries(
     }
 
     let mut rows = query.fetch_all(pool).await?;
-    if let (true, Some(name_filter)) = (rows.is_empty(), name_filter) {
-        let base = "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE state = ? AND name = ?";
-        let sql = if id_filter.is_some() {
-            format!("{base} AND numeric_id = ? ORDER BY created_at DESC LIMIT 1")
-        } else {
-            format!("{base} ORDER BY created_at DESC LIMIT 1")
+    if rows.is_empty() && (name_filter.is_some() || id_filter.is_some()) {
+        let base = "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE state = ?";
+        let sql = match (name_filter, id_filter) {
+            (Some(_), Some(_)) => {
+                format!("{base} AND name = ? AND numeric_id = ? ORDER BY created_at DESC LIMIT 1")
+            }
+            (Some(_), None) => format!("{base} AND name = ? ORDER BY created_at DESC LIMIT 1"),
+            (None, Some(_)) => {
+                format!("{base} AND numeric_id = ? ORDER BY created_at DESC LIMIT 1")
+            }
+            (None, None) => unreachable!("filtered artifact fallback requires a filter"),
         };
         let query = rewrite_placeholders(&sql, driver);
-        let mut query = sqlx::query(safe_sql(&query))
-            .bind("finalized")
-            .bind(name_filter);
+        let mut query = sqlx::query(safe_sql(&query)).bind("finalized");
+        if let Some(name_filter) = name_filter {
+            query = query.bind(name_filter);
+        }
         if let Some(id_filter) = id_filter {
             query = query.bind(id_filter);
         }

@@ -245,6 +245,24 @@ async fn artifact_twirp_roundtrip_uses_local_storage() -> Result<()> {
         finalized.artifact_id
     );
 
+    let retry_id_list: ListArtifactsResponse = client
+        .post(server.artifact_endpoint("ListArtifacts"))
+        .header("content-type", "application/json")
+        .json(&json!({
+            "workflowRunBackendId": "run-1-retry",
+            "idFilter": finalized.artifact_id
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(retry_id_list.artifacts.len(), 1);
+    assert_eq!(
+        retry_id_list.artifacts[0].database_id,
+        finalized.artifact_id
+    );
+
     let signed: GetSignedArtifactUrlResponse = client
         .post(server.artifact_endpoint("GetSignedArtifactURL"))
         .header("content-type", "application/json")
