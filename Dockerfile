@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.22
 
 FROM rust:1.95-trixie AS builder
-LABEL org.opencontainers.image.source="https://github.com/n-cloud-labs/gha-cache-server"
+LABEL org.opencontainers.image.source="https://github.com/nimbus-cloud-labs/gha-cache-server"
 WORKDIR /usr/src/gha-cache-server
 
 RUN apt-get update \
@@ -27,7 +27,7 @@ RUN mkdir -p /out/usr/local/bin /out/srv/gha-cache-server \
     && cp -r migrations /out/srv/gha-cache-server/
 
 FROM bitnami/minideb:trixie AS runtime
-LABEL org.opencontainers.image.source="https://github.com/n-cloud-labs/gha-cache-server"
+LABEL org.opencontainers.image.source="https://github.com/nimbus-cloud-labs/gha-cache-server"
 WORKDIR /srv/gha-cache-server
 
 RUN install_packages ca-certificates
