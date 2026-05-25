@@ -41,7 +41,7 @@ percent-encoding = { version = "2" }
 pin-project-lite = { version = "0.2" }
 prost = { version = "0.14" }
 prost-types = { version = "0.14" }
-quick-xml = { version = "0.38" }
+quick-xml = { version = "0.40" }
 rand = { version = "0.10" }
 rsa = { version = "0.9", features = ["sha2"] }
 rustls = { version = "0.23.32" }
@@ -50,8 +50,8 @@ rustls-pemfile = { version = "2" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 sha2 = { version = "0.11" }
-sqlparser = { version = "0.61", features = ["visitor"] }
-sqlx = { version = "0.8", features = ["any", "chrono", "migrate", "mysql", "postgres", "runtime-tokio", "sqlite", "uuid"] }
+sqlparser = { version = "0.62", features = ["visitor"] }
+sqlx = { version = "0.9", features = ["any", "chrono", "migrate", "mysql", "postgres", "runtime-tokio", "sqlite", "uuid"] }
 sync_wrapper = { version = "1" }
 thiserror = { version = "2" }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread", "signal"] }
@@ -67,7 +67,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 prost-build = { version = "0.14" }
 
 [dev-dependencies]
-opendal = { version = "0.55", features = ["services-ghac"] }
+opendal = { version = "0.56", features = ["services-ghac"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 tempfile = { version = "3" }
 

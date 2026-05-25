@@ -12,7 +12,7 @@ use std::{io, time::Duration};
 use uuid::Uuid;
 
 use crate::api::path::encode_path_segment;
-use crate::db::rewrite_placeholders;
+use crate::db::{rewrite_placeholders, safe_sql};
 use crate::http::AppState;
 use crate::meta;
 use crate::{
@@ -49,7 +49,7 @@ async fn resolve_cache_id(st: &AppState, raw: &str) -> Result<Uuid> {
         "SELECT id FROM cache_entries WHERE id LIKE ? LIMIT 1",
         st.database_driver,
     );
-    let row = sqlx::query(&sql)
+    let row = sqlx::query(safe_sql(&sql))
         .bind(&prefix)
         .fetch_optional(&st.pool)
         .await?;
@@ -273,7 +273,10 @@ pub async fn list_caches(
         "SELECT id, scope, cache_key, cache_version, size_bytes, storage_key, created_at, last_access_at FROM cache_entries WHERE cache_key = ? ORDER BY created_at DESC",
         st.database_driver,
     );
-    let rows = sqlx::query(&query).bind(&key).fetch_all(&st.pool).await?;
+    let rows = sqlx::query(safe_sql(&query))
+        .bind(&key)
+        .fetch_all(&st.pool)
+        .await?;
 
     let mut entries = Vec::with_capacity(rows.len());
     for row in rows {
@@ -316,7 +319,7 @@ pub async fn get_cache_entry(
     );
 
     for key in keys {
-        let rec = sqlx::query(&query)
+        let rec = sqlx::query(safe_sql(&query))
             .bind(&key)
             .bind(&version)
             .fetch_optional(&st.pool)
@@ -409,7 +412,7 @@ pub async fn upload_chunk(
         "SELECT upload_id, storage_key FROM cache_uploads u JOIN cache_entries e ON e.id = u.entry_id WHERE e.id = ?",
         st.database_driver,
     );
-    let rec = sqlx::query(&sql)
+    let rec = sqlx::query(safe_sql(&sql))
         .bind(uuid.to_string())
         .fetch_one(&st.pool)
         .await?;
@@ -433,7 +436,7 @@ pub async fn upload_chunk(
             "SELECT part_index FROM cache_upload_parts WHERE upload_id = ? AND part_offset = ? LIMIT 1",
             st.database_driver,
         );
-        if let Some(existing) = sqlx::query_scalar::<_, i32>(&lookup_sql)
+        if let Some(existing) = sqlx::query_scalar::<_, i32>(safe_sql(&lookup_sql))
             .bind(&upload_id)
             .bind(offset)
             .fetch_optional(&st.pool)
@@ -446,7 +449,7 @@ pub async fn upload_chunk(
                 "SELECT COALESCE(MAX(part_index) + 1, 0) FROM cache_upload_parts WHERE upload_id = ?",
                 st.database_driver,
             );
-            let next: i64 = sqlx::query_scalar(&next_sql)
+            let next: i64 = sqlx::query_scalar(safe_sql(&next_sql))
                 .bind(&upload_id)
                 .fetch_one(&st.pool)
                 .await?;
@@ -612,7 +615,7 @@ pub async fn commit_cache(
         "SELECT upload_id, storage_key FROM cache_uploads u JOIN cache_entries e ON e.id = u.entry_id WHERE e.id = ?",
         st.database_driver,
     );
-    let rec = sqlx::query(&query)
+    let rec = sqlx::query(safe_sql(&query))
         .bind(uuid.to_string())
         .fetch_one(&st.pool)
         .await?;

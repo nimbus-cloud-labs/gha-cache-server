@@ -6,7 +6,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::api::upload::{body_to_blob_payload, chunk_index_from_block_id};
-use crate::db::rewrite_placeholders;
+use crate::db::{rewrite_placeholders, safe_sql};
 use crate::error::{ApiError, Result};
 use crate::http::AppState;
 use crate::meta;
@@ -38,7 +38,7 @@ pub async fn put_upload(
         "SELECT upload_id, storage_key FROM cache_uploads u JOIN cache_entries e ON e.id = u.entry_id WHERE e.id = ?",
         st.database_driver,
     );
-    let rec = sqlx::query(&sql)
+    let rec = sqlx::query(safe_sql(&sql))
         .bind(uuid.to_string())
         .fetch_one(&st.pool)
         .await?;

@@ -9,7 +9,7 @@ use tokio::time;
 use uuid::Uuid;
 
 use crate::config::DatabaseDriver;
-use crate::db::rewrite_placeholders;
+use crate::db::{rewrite_placeholders, safe_sql};
 use crate::error::ApiError;
 use crate::meta;
 
@@ -242,7 +242,7 @@ async fn insert_cache_numeric_id(
 
     loop {
         let candidate = generate_cache_numeric_id();
-        let result = sqlx::query(&insert_sql)
+        let result = sqlx::query(safe_sql(&insert_sql))
             .bind(&entry_str)
             .bind(candidate)
             .execute(tx.as_mut())
@@ -251,7 +251,7 @@ async fn insert_cache_numeric_id(
         match result {
             Ok(_) => return Ok(candidate),
             Err(sqlx::Error::Database(db_err)) if db_err.is_unique_violation() => {
-                if let Some(existing) = sqlx::query_scalar::<_, i64>(&fetch_sql)
+                if let Some(existing) = sqlx::query_scalar::<_, i64>(safe_sql(&fetch_sql))
                     .bind(&entry_str)
                     .fetch_optional(tx.as_mut())
                     .await?
@@ -362,7 +362,10 @@ async fn fetch_upload(
         "SELECT id, entry_id, upload_id, state, active_part_count, pending_finalize FROM cache_uploads WHERE upload_id = ?",
         driver,
     );
-    let row = sqlx::query(&query).bind(upload_id).fetch_one(pool).await?;
+    let row = sqlx::query(safe_sql(&query))
+        .bind(upload_id)
+        .fetch_one(pool)
+        .await?;
     map_upload_row(row)
 }
 
@@ -375,7 +378,10 @@ pub async fn get_upload_status(
         "SELECT state, active_part_count, pending_finalize FROM cache_uploads WHERE upload_id = ?",
         driver,
     );
-    let row = sqlx::query(&query).bind(upload_id).fetch_one(pool).await?;
+    let row = sqlx::query(safe_sql(&query))
+        .bind(upload_id)
+        .fetch_one(pool)
+        .await?;
     Ok(UploadStatus {
         state: row.try_get("state")?,
         active_part_count: row.try_get("active_part_count")?,
@@ -408,7 +414,7 @@ async fn increment_active_part_count(
         "UPDATE cache_uploads SET active_part_count = active_part_count + 1, updated_at = ? WHERE upload_id = ?",
         driver,
     );
-    let result = sqlx::query(&query)
+    let result = sqlx::query(safe_sql(&query))
         .bind(now)
         .bind(upload_id)
         .execute(pool)
@@ -431,7 +437,7 @@ async fn decrement_active_part_count(
         "UPDATE cache_uploads SET active_part_count = CASE WHEN active_part_count > 0 THEN active_part_count - 1 ELSE 0 END, updated_at = ? WHERE upload_id = ?",
         driver,
     );
-    let result = sqlx::query(&update_query)
+    let result = sqlx::query(safe_sql(&update_query))
         .bind(now)
         .bind(upload_id)
         .execute(&mut *tx)
@@ -445,7 +451,7 @@ async fn decrement_active_part_count(
         "SELECT active_part_count FROM cache_uploads WHERE upload_id = ?",
         driver,
     );
-    let row = sqlx::query(&select_query)
+    let row = sqlx::query(safe_sql(&select_query))
         .bind(upload_id)
         .fetch_one(&mut *tx)
         .await?;
@@ -482,7 +488,7 @@ pub async fn set_pending_finalize(
         "UPDATE cache_uploads SET pending_finalize = ?, updated_at = ? WHERE upload_id = ?",
         driver,
     );
-    let result = sqlx::query(&query)
+    let result = sqlx::query(safe_sql(&query))
         .bind(pending)
         .bind(now)
         .bind(upload_id)
@@ -514,7 +520,7 @@ async fn fetch_entry(
         "SELECT id, org, repo, cache_key, cache_version, scope, size_bytes, checksum, storage_key, created_at, last_access_at, ttl_seconds FROM cache_entries WHERE id = ?",
         driver,
     );
-    let row = sqlx::query(&query)
+    let row = sqlx::query(safe_sql(&query))
         .bind(id.to_string())
         .fetch_one(pool)
         .await?;
@@ -531,7 +537,7 @@ pub async fn touch_entry(
         "UPDATE cache_entries SET last_access_at = ? WHERE id = ?",
         driver,
     );
-    sqlx::query(&query)
+    sqlx::query(safe_sql(&query))
         .bind(now)
         .bind(id.to_string())
         .execute(pool)
@@ -545,7 +551,7 @@ pub async fn delete_entry(
     id: Uuid,
 ) -> Result<(), sqlx::Error> {
     let query = rewrite_placeholders("DELETE FROM cache_entries WHERE id = ?", driver);
-    sqlx::query(&query)
+    sqlx::query(safe_sql(&query))
         .bind(id.to_string())
         .execute(pool)
         .await?;
@@ -567,7 +573,7 @@ pub async fn expired_entries(
 FROM cache_entries WHERE last_access_at + CASE WHEN ttl_seconds > ? THEN ? ELSE ttl_seconds END < ? ORDER BY last_access_at ASC",
             driver,
         );
-        sqlx::query(&query)
+        sqlx::query(safe_sql(&query))
             .bind(secs)
             .bind(secs)
             .bind(ts)
@@ -579,7 +585,10 @@ FROM cache_entries WHERE last_access_at + CASE WHEN ttl_seconds > ? THEN ? ELSE 
 FROM cache_entries WHERE last_access_at + ttl_seconds < ? ORDER BY last_access_at ASC",
             driver,
         );
-        sqlx::query(&query).bind(ts).fetch_all(pool).await?
+        sqlx::query(safe_sql(&query))
+            .bind(ts)
+            .fetch_all(pool)
+            .await?
     };
 
     rows.into_iter().map(map_cache_entry).collect()
@@ -590,7 +599,9 @@ pub async fn total_occupancy(pool: &AnyPool, driver: DatabaseDriver) -> Result<i
         "SELECT COALESCE(SUM(size_bytes), 0) FROM cache_entries",
         driver,
     );
-    let total = sqlx::query_scalar::<_, i64>(&query).fetch_one(pool).await?;
+    let total = sqlx::query_scalar::<_, i64>(safe_sql(&query))
+        .fetch_one(pool)
+        .await?;
     Ok(total)
 }
 
@@ -604,7 +615,10 @@ pub async fn list_entries_ordered(
             "SELECT id, org, repo, cache_key, cache_version, scope, size_bytes, checksum, storage_key, created_at, last_access_at, ttl_seconds FROM cache_entries ORDER BY last_access_at ASC LIMIT ?",
             driver,
         );
-        let rows = sqlx::query(&query).bind(limit).fetch_all(pool).await?;
+        let rows = sqlx::query(safe_sql(&query))
+            .bind(limit)
+            .fetch_all(pool)
+            .await?;
 
         rows.into_iter().map(map_cache_entry).collect()
     } else {
@@ -612,7 +626,7 @@ pub async fn list_entries_ordered(
             "SELECT id, org, repo, cache_key, cache_version, scope, size_bytes, checksum, storage_key, created_at, last_access_at, ttl_seconds FROM cache_entries ORDER BY last_access_at ASC",
             driver,
         );
-        let rows = sqlx::query(&query).fetch_all(pool).await?;
+        let rows = sqlx::query(safe_sql(&query)).fetch_all(pool).await?;
 
         rows.into_iter().map(map_cache_entry).collect()
     }
@@ -626,7 +640,7 @@ pub async fn current_generation(
         "SELECT current_generation FROM cache_state WHERE singleton = ? LIMIT 1",
         driver,
     );
-    sqlx::query_scalar::<_, i64>(&query)
+    sqlx::query_scalar::<_, i64>(safe_sql(&query))
         .bind(1_i32)
         .fetch_one(pool)
         .await
@@ -641,7 +655,7 @@ pub async fn rotate_generation_and_clear_entries(
         "SELECT current_generation FROM cache_state WHERE singleton = ? LIMIT 1",
         driver,
     );
-    let previous = sqlx::query_scalar::<_, i64>(&select_query)
+    let previous = sqlx::query_scalar::<_, i64>(safe_sql(&select_query))
         .bind(1_i32)
         .fetch_one(&mut *tx)
         .await?;
@@ -651,17 +665,21 @@ pub async fn rotate_generation_and_clear_entries(
         "UPDATE cache_state SET current_generation = ? WHERE singleton = ?",
         driver,
     );
-    sqlx::query(&update_query)
+    sqlx::query(safe_sql(&update_query))
         .bind(current)
         .bind(1_i32)
         .execute(&mut *tx)
         .await?;
 
     let delete_uploads_query = rewrite_placeholders("DELETE FROM cache_uploads", driver);
-    sqlx::query(&delete_uploads_query).execute(&mut *tx).await?;
+    sqlx::query(safe_sql(&delete_uploads_query))
+        .execute(&mut *tx)
+        .await?;
 
     let delete_entries_query = rewrite_placeholders("DELETE FROM cache_entries", driver);
-    sqlx::query(&delete_entries_query).execute(&mut *tx).await?;
+    sqlx::query(safe_sql(&delete_entries_query))
+        .execute(&mut *tx)
+        .await?;
 
     tx.commit().await?;
 
@@ -692,7 +710,7 @@ pub async fn create_artifact_entry(
 
     loop {
         let numeric_id = generate_cache_numeric_id();
-        let result = sqlx::query(&insert_query)
+        let result = sqlx::query(safe_sql(&insert_query))
             .bind(id.to_string())
             .bind(numeric_id)
             .bind(workflow_run_backend_id)
@@ -724,7 +742,7 @@ pub async fn fetch_artifact_entry(
         "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE id = ?",
         driver,
     );
-    let row = sqlx::query(&query)
+    let row = sqlx::query(safe_sql(&query))
         .bind(id.to_string())
         .fetch_one(pool)
         .await?;
@@ -741,7 +759,7 @@ pub async fn find_active_artifact_by_name(
         "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE workflow_run_backend_id = ? AND name = ? AND state != ? ORDER BY created_at DESC LIMIT 1",
         driver,
     );
-    let maybe = sqlx::query(&query)
+    let maybe = sqlx::query(safe_sql(&query))
         .bind(workflow_run_backend_id)
         .bind(name)
         .bind("deleted")
@@ -760,7 +778,7 @@ pub async fn find_finalized_artifact_by_name(
         "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE workflow_run_backend_id = ? AND name = ? AND state = ? ORDER BY created_at DESC LIMIT 1",
         driver,
     );
-    let maybe = sqlx::query(&query)
+    let maybe = sqlx::query(safe_sql(&query))
         .bind(workflow_run_backend_id)
         .bind(name)
         .bind("finalized")
@@ -778,7 +796,7 @@ pub async fn find_latest_finalized_artifact_by_name(
         "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE name = ? AND state = ? ORDER BY created_at DESC LIMIT 1",
         driver,
     );
-    let maybe = sqlx::query(&query)
+    let maybe = sqlx::query(safe_sql(&query))
         .bind(name)
         .bind("finalized")
         .fetch_optional(pool)
@@ -803,7 +821,7 @@ pub async fn list_artifact_entries(
         (None, None) => format!("{base} ORDER BY created_at DESC"),
     };
     let query = rewrite_placeholders(&sql, driver);
-    let mut query = sqlx::query(&query)
+    let mut query = sqlx::query(safe_sql(&query))
         .bind(workflow_run_backend_id)
         .bind("finalized");
     if let Some(name_filter) = name_filter {
@@ -822,7 +840,9 @@ pub async fn list_artifact_entries(
             format!("{base} ORDER BY created_at DESC LIMIT 1")
         };
         let query = rewrite_placeholders(&sql, driver);
-        let mut query = sqlx::query(&query).bind("finalized").bind(name_filter);
+        let mut query = sqlx::query(safe_sql(&query))
+            .bind("finalized")
+            .bind(name_filter);
         if let Some(id_filter) = id_filter {
             query = query.bind(id_filter);
         }
@@ -840,7 +860,7 @@ pub async fn expired_artifact_entries(
         "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE expires_at IS NOT NULL AND expires_at < ? AND state != ? ORDER BY expires_at ASC",
         driver,
     );
-    let rows = sqlx::query(&query)
+    let rows = sqlx::query(safe_sql(&query))
         .bind(now.timestamp())
         .bind("deleted")
         .fetch_all(pool)
@@ -854,7 +874,7 @@ pub async fn remove_artifact_entry(
     artifact_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     let query = rewrite_placeholders("DELETE FROM artifact_entries WHERE id = ?", driver);
-    sqlx::query(&query)
+    sqlx::query(safe_sql(&query))
         .bind(artifact_id.to_string())
         .execute(pool)
         .await?;
@@ -872,7 +892,7 @@ pub async fn upsert_artifact_upload(
         "INSERT INTO artifact_uploads (id, artifact_id, upload_id, state) VALUES (?, ?, ?, ?)",
         driver,
     );
-    sqlx::query(&insert_query)
+    sqlx::query(safe_sql(&insert_query))
         .bind(id.to_string())
         .bind(artifact_id.to_string())
         .bind(upload_id)
@@ -892,7 +912,7 @@ pub async fn fetch_artifact_upload(
         "SELECT id, artifact_id, upload_id, state, etag, size_bytes FROM artifact_uploads WHERE artifact_id = ?",
         driver,
     );
-    let row = sqlx::query(&query)
+    let row = sqlx::query(safe_sql(&query))
         .bind(artifact_id.to_string())
         .fetch_one(pool)
         .await?;
@@ -909,7 +929,7 @@ pub async fn next_artifact_part_number(
         "SELECT part_number FROM artifact_upload_parts WHERE upload_id = ? AND block_id = ?",
         driver,
     );
-    if let Some(existing) = sqlx::query_scalar::<_, i64>(&existing_query)
+    if let Some(existing) = sqlx::query_scalar::<_, i64>(safe_sql(&existing_query))
         .bind(upload_id)
         .bind(block_id)
         .fetch_optional(pool)
@@ -927,7 +947,7 @@ pub async fn next_artifact_part_number(
         "SELECT COALESCE(MAX(part_number), 0) FROM artifact_upload_parts WHERE upload_id = ?",
         driver,
     );
-    let max = sqlx::query_scalar::<_, i64>(&max_query)
+    let max = sqlx::query_scalar::<_, i64>(safe_sql(&max_query))
         .bind(upload_id)
         .fetch_one(pool)
         .await?;
@@ -958,7 +978,7 @@ pub async fn record_artifact_part(
         "INSERT INTO artifact_upload_parts (upload_id, block_id, part_number, size, etag, storage_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         driver,
     );
-    let insert = sqlx::query(&insert_query)
+    let insert = sqlx::query(safe_sql(&insert_query))
         .bind(upload_id)
         .bind(block_id)
         .bind(i64::from(part_number))
@@ -977,7 +997,7 @@ pub async fn record_artifact_part(
                 "UPDATE artifact_upload_parts SET part_number = ?, size = ?, etag = ?, storage_key = ?, updated_at = ? WHERE upload_id = ? AND block_id = ?",
                 driver,
             );
-            sqlx::query(&update_query)
+            sqlx::query(safe_sql(&update_query))
                 .bind(i64::from(part_number))
                 .bind(size)
                 .bind(etag)
@@ -1005,7 +1025,7 @@ pub async fn artifact_parts_by_block_ids(
     );
     let mut parts = Vec::with_capacity(block_ids.len());
     for block_id in block_ids {
-        let row = sqlx::query(&query)
+        let row = sqlx::query(safe_sql(&query))
             .bind(upload_id)
             .bind(block_id)
             .fetch_one(pool)
@@ -1027,7 +1047,7 @@ pub async fn mark_artifact_uploaded(
         "UPDATE artifact_uploads SET state = ?, etag = ?, size_bytes = ?, updated_at = ? WHERE artifact_id = ?",
         driver,
     );
-    sqlx::query(&update_upload)
+    sqlx::query(safe_sql(&update_upload))
         .bind("uploaded")
         .bind(etag)
         .bind(size_bytes)
@@ -1040,7 +1060,7 @@ pub async fn mark_artifact_uploaded(
         "UPDATE artifact_entries SET state = ?, size_bytes = ?, updated_at = ? WHERE id = ?",
         driver,
     );
-    sqlx::query(&update_entry)
+    sqlx::query(safe_sql(&update_entry))
         .bind("uploading")
         .bind(size_bytes)
         .bind(now)
@@ -1061,7 +1081,7 @@ pub async fn mark_artifact_multipart_committed(
         "UPDATE artifact_uploads SET state = ?, size_bytes = ?, updated_at = ? WHERE artifact_id = ?",
         driver,
     );
-    sqlx::query(&update_upload)
+    sqlx::query(safe_sql(&update_upload))
         .bind("completed")
         .bind(size_bytes)
         .bind(now)
@@ -1073,7 +1093,7 @@ pub async fn mark_artifact_multipart_committed(
         "UPDATE artifact_entries SET state = ?, size_bytes = ?, updated_at = ? WHERE id = ?",
         driver,
     );
-    sqlx::query(&update_entry)
+    sqlx::query(safe_sql(&update_entry))
         .bind("uploading")
         .bind(size_bytes)
         .bind(now)
@@ -1095,7 +1115,7 @@ pub async fn finalize_artifact_entry(
         "UPDATE artifact_entries SET state = ?, size_bytes = ?, hash = ?, updated_at = ? WHERE id = ?",
         driver,
     );
-    sqlx::query(&update_entry)
+    sqlx::query(safe_sql(&update_entry))
         .bind("finalized")
         .bind(size_bytes)
         .bind(hash)
@@ -1108,7 +1128,7 @@ pub async fn finalize_artifact_entry(
         "UPDATE artifact_uploads SET state = ?, updated_at = ? WHERE artifact_id = ?",
         driver,
     );
-    sqlx::query(&update_upload)
+    sqlx::query(safe_sql(&update_upload))
         .bind("completed")
         .bind(now)
         .bind(artifact_id.to_string())
@@ -1127,7 +1147,7 @@ pub async fn delete_artifact_entry(
         "UPDATE artifact_entries SET state = ?, updated_at = ? WHERE id = ?",
         driver,
     );
-    sqlx::query(&query)
+    sqlx::query(safe_sql(&query))
         .bind("deleted")
         .bind(now)
         .bind(artifact_id.to_string())
@@ -1156,7 +1176,7 @@ pub async fn create_entry(
         "INSERT INTO cache_entries (id, org, repo, cache_key, cache_version, scope, storage_key) VALUES (?, ?, ?, ?, ?, ?, ?)",
         driver,
     );
-    sqlx::query(&query)
+    sqlx::query(safe_sql(&query))
         .bind(id.to_string())
         .bind(org)
         .bind(repo)
@@ -1183,7 +1203,7 @@ pub async fn get_cache_numeric_id(
         "SELECT numeric_id FROM cache_entry_ids WHERE entry_id = ? LIMIT 1",
         driver,
     );
-    sqlx::query_scalar::<_, i64>(&query)
+    sqlx::query_scalar::<_, i64>(safe_sql(&query))
         .bind(entry_id.to_string())
         .fetch_optional(pool)
         .await
@@ -1198,7 +1218,7 @@ pub async fn find_entry_id_by_numeric(
         "SELECT entry_id FROM cache_entry_ids WHERE numeric_id = ? LIMIT 1",
         driver,
     );
-    let maybe = sqlx::query(&query)
+    let maybe = sqlx::query(safe_sql(&query))
         .bind(numeric_id)
         .fetch_optional(pool)
         .await?;
@@ -1221,7 +1241,7 @@ pub async fn find_entry_by_key_version(
         "SELECT id, org, repo, cache_key, cache_version, scope, size_bytes, checksum, storage_key, created_at, last_access_at, ttl_seconds FROM cache_entries WHERE cache_key = ? AND cache_version = ? ORDER BY created_at DESC LIMIT 1",
         driver,
     );
-    let maybe_row = sqlx::query(&query)
+    let maybe_row = sqlx::query(safe_sql(&query))
         .bind(key)
         .bind(version)
         .fetch_optional(pool)
@@ -1248,7 +1268,7 @@ pub async fn upsert_upload(
         "INSERT INTO cache_uploads (id, entry_id, upload_id, state) VALUES (?, ?, ?, ?)",
         driver,
     );
-    let insert = sqlx::query(&insert_query)
+    let insert = sqlx::query(safe_sql(&insert_query))
         .bind(id.to_string())
         .bind(entry.clone())
         .bind(upload_id)
@@ -1264,7 +1284,7 @@ pub async fn upsert_upload(
                     "UPDATE cache_uploads SET entry_id = ?, state = ?, updated_at = ? WHERE upload_id = ?",
                     driver,
                 );
-                sqlx::query(&update_query)
+                sqlx::query(safe_sql(&update_query))
                     .bind(entry)
                     .bind(state)
                     .bind(now)
@@ -1298,7 +1318,7 @@ pub async fn reserve_part(
         driver,
     );
     let part_number = i64::from(part_index) + 1;
-    let insert = sqlx::query(&insert_query)
+    let insert = sqlx::query(safe_sql(&insert_query))
         .bind(upload_id)
         .bind(part_index)
         .bind(part_number)
@@ -1322,7 +1342,7 @@ pub async fn reserve_part(
                         "UPDATE cache_upload_parts SET part_offset = ?, size = ?, state = ?, etag = NULL, updated_at = ? WHERE upload_id = ? AND part_index = ?",
                         driver,
                     );
-                    sqlx::query(&update_query)
+                    sqlx::query(safe_sql(&update_query))
                         .bind(offset)
                         .bind(size)
                         .bind("pending")
@@ -1358,7 +1378,7 @@ pub async fn complete_part(
         "SELECT size, part_offset FROM cache_upload_parts WHERE upload_id = ? AND part_index = ?",
         driver,
     );
-    let maybe_row = sqlx::query(&fetch_query)
+    let maybe_row = sqlx::query(safe_sql(&fetch_query))
         .bind(upload_id)
         .bind(part_index)
         .fetch_optional(&mut *tx)
@@ -1382,7 +1402,7 @@ pub async fn complete_part(
             "SELECT COALESCE(SUM(size), 0) AS total FROM cache_upload_parts WHERE upload_id = ? AND part_index < ?"
         };
         let sum_query = rewrite_placeholders(sum_sql, driver);
-        let total: i64 = sqlx::query(&sum_query)
+        let total: i64 = sqlx::query(safe_sql(&sum_query))
             .bind(upload_id)
             .bind(part_index)
             .fetch_one(&mut *tx)
@@ -1412,7 +1432,7 @@ pub async fn complete_part(
         "UPDATE cache_upload_parts SET part_offset = ?, etag = ?, state = ?, updated_at = ?, size = ? WHERE upload_id = ? AND part_index = ?",
         driver,
     );
-    sqlx::query(&update_query)
+    sqlx::query(safe_sql(&update_query))
         .bind(offset_to_store)
         .bind(etag)
         .bind("completed")
@@ -1436,7 +1456,7 @@ pub async fn get_completed_parts(
         "SELECT part_index, part_number, part_offset, size, etag FROM cache_upload_parts WHERE upload_id = ? AND state = ? ORDER BY part_index ASC",
         driver,
     );
-    let rows = sqlx::query(&query)
+    let rows = sqlx::query(safe_sql(&query))
         .bind(upload_id)
         .bind("completed")
         .fetch_all(pool)
@@ -1481,7 +1501,7 @@ pub async fn get_completed_part_count(
         "SELECT COUNT(*) AS count FROM cache_upload_parts WHERE upload_id = ? AND state = ?",
         driver,
     );
-    let count = sqlx::query_scalar::<_, i64>(&query)
+    let count = sqlx::query_scalar::<_, i64>(safe_sql(&query))
         .bind(upload_id)
         .bind("completed")
         .fetch_one(pool)
@@ -1533,7 +1553,7 @@ pub async fn transition_upload_state(
         "UPDATE cache_uploads SET state = ?, updated_at = ? WHERE upload_id = ? AND state = ?",
         driver,
     );
-    let updated = sqlx::query(&query)
+    let updated = sqlx::query(safe_sql(&query))
         .bind(next)
         .bind(now)
         .bind(upload_id)

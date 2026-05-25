@@ -1,5 +1,6 @@
 use tracing::error;
 
+use crate::db::safe_sql;
 use crate::error::ApiError;
 use crate::http::AppState;
 use crate::meta;
@@ -125,7 +126,7 @@ pub async fn run(job: FinalizeUploadJob) -> Result<(), ApiError> {
                 driver,
             );
 
-            sqlx::query(&query)
+            sqlx::query(safe_sql(&query))
                 .bind(size)
                 .bind(entry_id.to_string())
                 .execute(&pool)

@@ -65,6 +65,10 @@ pub fn rewrite_placeholders<'q>(sql: &'q str, driver: DatabaseDriver) -> Cow<'q,
     Cow::Borrowed(sql)
 }
 
+pub(crate) fn safe_sql(sql: impl AsRef<str>) -> sqlx::AssertSqlSafe<String> {
+    sqlx::AssertSqlSafe(sql.as_ref().to_owned())
+}
+
 struct PlaceholderRewriter {
     next_index: usize,
     replaced: bool,

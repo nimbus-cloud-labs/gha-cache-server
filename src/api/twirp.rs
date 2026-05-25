@@ -17,7 +17,7 @@ use crate::api::path::encode_path_segment;
 use crate::api::proto::cache;
 use crate::api::types::*;
 use crate::api::upload::{build_generation_scoped_storage_key, normalize_key, normalize_version};
-use crate::db::rewrite_placeholders;
+use crate::db::{rewrite_placeholders, safe_sql};
 use crate::error::{ApiError, Result};
 use crate::http::AppState;
 use crate::meta;
@@ -319,7 +319,7 @@ pub async fn finalize_cache_entry_upload(
         "SELECT upload_id, storage_key FROM cache_uploads u JOIN cache_entries e ON e.id = u.entry_id WHERE e.id = ?",
         st.database_driver,
     );
-    let rec = sqlx::query(&query)
+    let rec = sqlx::query(safe_sql(&query))
         .bind(entry.id.to_string())
         .fetch_one(&st.pool)
         .await?;

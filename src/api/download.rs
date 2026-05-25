@@ -8,7 +8,7 @@ use sqlx::Row;
 use std::time::Duration;
 use uuid::Uuid;
 
-use crate::db::rewrite_placeholders;
+use crate::db::{rewrite_placeholders, safe_sql};
 use crate::error::{ApiError, Result};
 use crate::http::AppState;
 use crate::meta;
@@ -29,7 +29,7 @@ pub async fn download_proxy(
         "SELECT storage_key, cache_key FROM cache_entries WHERE id = ?",
         st.database_driver,
     );
-    let rec = sqlx::query(&query)
+    let rec = sqlx::query(safe_sql(&query))
         .bind(entry_id.to_string())
         .fetch_optional(&st.pool)
         .await?;
