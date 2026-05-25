@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use sqlx::{AnyPool, Error, Row, Transaction};
+use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::io;
 use std::time::Duration;
@@ -804,6 +805,37 @@ pub async fn find_latest_finalized_artifact_by_name(
     maybe.map(map_artifact_entry).transpose()
 }
 
+/// Lists the newest finalized artifact entry for each artifact name.
+///
+/// This fallback supports retry jobs whose GitHub artifact backend identifier no
+/// longer matches the backend identifier that uploaded the original artifacts.
+///
+/// # Errors
+///
+/// Returns an error when the metadata query fails or a row cannot be decoded.
+pub async fn list_latest_finalized_artifact_entries_by_name(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+) -> Result<Vec<ArtifactEntry>, sqlx::Error> {
+    let query = rewrite_placeholders(
+        "SELECT id, numeric_id, workflow_run_backend_id, workflow_job_run_backend_id, name, version, size_bytes, hash, storage_key, state, expires_at, created_at, updated_at FROM artifact_entries WHERE state = ? ORDER BY created_at DESC",
+        driver,
+    );
+    let rows = sqlx::query(safe_sql(&query))
+        .bind("finalized")
+        .fetch_all(pool)
+        .await?;
+    let mut seen = HashSet::new();
+    rows.into_iter()
+        .map(map_artifact_entry)
+        .filter_map(|entry| match entry {
+            Ok(entry) if seen.insert(entry.name.clone()) => Some(Ok(entry)),
+            Ok(_) => None,
+            Err(err) => Some(Err(err)),
+        })
+        .collect()
+}
+
 pub async fn list_artifact_entries(
     pool: &AnyPool,
     driver: DatabaseDriver,
@@ -848,7 +880,14 @@ pub async fn list_artifact_entries(
         }
         rows = query.fetch_all(pool).await?;
     }
-    rows.into_iter().map(map_artifact_entry).collect()
+    let entries: Vec<_> = rows
+        .into_iter()
+        .map(map_artifact_entry)
+        .collect::<Result<_, _>>()?;
+    if entries.is_empty() && name_filter.is_none() && id_filter.is_none() {
+        return list_latest_finalized_artifact_entries_by_name(pool, driver).await;
+    }
+    Ok(entries)
 }
 
 pub async fn expired_artifact_entries(

@@ -228,6 +228,23 @@ async fn artifact_twirp_roundtrip_uses_local_storage() -> Result<()> {
     assert_eq!(listed.artifacts[0].name, "logs");
     assert_eq!(listed.artifacts[0].size, payload.len() as i64);
 
+    let retry_pattern_list: ListArtifactsResponse = client
+        .post(server.artifact_endpoint("ListArtifacts"))
+        .header("content-type", "application/json")
+        .json(&json!({
+            "workflowRunBackendId": "run-1-retry"
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(retry_pattern_list.artifacts.len(), 1);
+    assert_eq!(
+        retry_pattern_list.artifacts[0].database_id,
+        finalized.artifact_id
+    );
+
     let signed: GetSignedArtifactUrlResponse = client
         .post(server.artifact_endpoint("GetSignedArtifactURL"))
         .header("content-type", "application/json")
