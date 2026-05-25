@@ -92,6 +92,7 @@ Response:
       "databaseId": 123456789,
       "name": "logs",
       "size": 1024,
+      "digest": "sha256:...",
       "createdAt": "2026-05-24T10:00:00Z"
     }
   ]

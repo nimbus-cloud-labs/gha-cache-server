@@ -136,6 +136,7 @@ struct ListArtifactsResponse {
 struct ListArtifact {
     #[serde(rename = "databaseId")]
     database_id: i64,
+    digest: String,
     name: String,
     size: i64,
 }
@@ -198,7 +199,8 @@ async fn artifact_twirp_roundtrip_uses_local_storage() -> Result<()> {
             "workflowRunBackendId": "run-1",
             "workflowJobRunBackendId": "job-1",
             "name": "logs",
-            "size": payload.len()
+            "size": payload.len(),
+            "hash": "sha256:artifact-test-digest"
         }))
         .send()
         .await?
@@ -222,6 +224,7 @@ async fn artifact_twirp_roundtrip_uses_local_storage() -> Result<()> {
         .await?;
     assert_eq!(listed.artifacts.len(), 1);
     assert_eq!(listed.artifacts[0].database_id, finalized.artifact_id);
+    assert_eq!(listed.artifacts[0].digest, "sha256:artifact-test-digest");
     assert_eq!(listed.artifacts[0].name, "logs");
     assert_eq!(listed.artifacts[0].size, payload.len() as i64);
 

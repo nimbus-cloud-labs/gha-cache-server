@@ -178,6 +178,7 @@ struct ListArtifact {
     size: i64,
     #[serde(rename = "createdAt")]
     created_at: DateTime<Utc>,
+    digest: Option<String>,
 }
 
 impl From<ListArtifact> for artifact::list_artifacts_response::MonolithArtifact {
@@ -189,6 +190,7 @@ impl From<ListArtifact> for artifact::list_artifacts_response::MonolithArtifact 
             name: value.name,
             size: value.size,
             created_at: Some(datetime_to_timestamp(value.created_at)),
+            digest: value.digest.unwrap_or_default(),
         }
     }
 }
@@ -793,6 +795,7 @@ fn entry_to_list_item(entry: ArtifactEntry) -> ListArtifact {
         name: entry.name,
         size: entry.size_bytes,
         created_at: entry.created_at,
+        digest: entry.hash,
     }
 }
 
