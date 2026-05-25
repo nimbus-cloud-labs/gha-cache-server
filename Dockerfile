@@ -14,7 +14,9 @@ COPY proto ./proto
 RUN mkdir src \
     && echo "" > src/lib.rs \
     && echo "fn main() {}" > src/main.rs \
-    && cargo build --release --locked --lib --bin gha-cache-server
+    && cargo build --release --locked --lib --bin gha-cache-server \
+    && cargo clean --release --package gha-cache-server \
+    && rm -rf src
 
 # Copy the full source tree and build the release binary
 COPY . .
