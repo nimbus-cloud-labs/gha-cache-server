@@ -626,10 +626,11 @@ pub async fn commit_cache(
     if status.pending_finalize {
         return Ok(StatusCode::CREATED);
     }
-    if let Err(err) =
-        meta::set_pending_finalize(&st.pool, st.database_driver, &upload_id, true).await
-    {
-        return Err(err.into());
+    if status.state == "completed" {
+        return Ok(StatusCode::CREATED);
+    }
+    if !meta::claim_pending_finalize(&st.pool, st.database_driver, &upload_id).await? {
+        return Ok(StatusCode::CREATED);
     }
 
     let run_in_background = if st.defer_finalize_in_background {
@@ -984,6 +985,112 @@ mod tests {
             .await
             .expect("fetch upload status");
         assert_eq!(upload_status.active_part_count, 0);
+        assert_eq!(upload_status.state, "completed");
+        assert!(!upload_status.pending_finalize);
+    }
+
+    #[tokio::test]
+    async fn commit_completed_upload_is_idempotent() {
+        sqlx::any::install_default_drivers();
+        let pool = AnyPoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:?cache=shared")
+            .await
+            .expect("connect sqlite");
+        sqlx::migrate!("./migrations/sqlite")
+            .run(&pool)
+            .await
+            .expect("run migrations");
+
+        let store = Arc::new(FinalizeStore::default());
+        let state = AppState {
+            pool: pool.clone(),
+            store: store.clone() as Arc<dyn BlobStore>,
+            enable_direct: false,
+            defer_finalize_in_background: true,
+            proxy_client: Arc::new(DummyProxyClient) as Arc<dyn ProxyHttpClient>,
+            database_driver: DatabaseDriver::Sqlite,
+        };
+
+        let entry = meta::create_entry(
+            &pool,
+            DatabaseDriver::Sqlite,
+            "org",
+            "repo",
+            "key",
+            "v1",
+            "_",
+            "storage",
+        )
+        .await
+        .expect("create entry");
+        let upload_id = Uuid::new_v4().to_string();
+        meta::upsert_upload(
+            &pool,
+            DatabaseDriver::Sqlite,
+            entry.id,
+            &upload_id,
+            "reserved",
+        )
+        .await
+        .expect("create upload");
+        meta::transition_upload_state(
+            &pool,
+            DatabaseDriver::Sqlite,
+            &upload_id,
+            &["reserved"],
+            "uploading",
+        )
+        .await
+        .expect("transition to uploading");
+
+        meta::reserve_part(&pool, DatabaseDriver::Sqlite, &upload_id, 0, Some(0), 3)
+            .await
+            .expect("reserve part");
+        meta::begin_part_upload(&pool, DatabaseDriver::Sqlite, &upload_id)
+            .await
+            .expect("begin part upload");
+        meta::complete_part(
+            &pool,
+            DatabaseDriver::Sqlite,
+            &upload_id,
+            0,
+            Some(0),
+            "etag",
+        )
+        .await
+        .expect("complete part");
+        meta::finish_part_upload(&pool, DatabaseDriver::Sqlite, &upload_id)
+            .await
+            .expect("finish part upload");
+
+        let first = commit_cache(
+            State(state.clone()),
+            Path(entry.id.to_string()),
+            Json(json!({ "size": 3 })),
+        )
+        .await
+        .expect("first commit result");
+        assert_eq!(first, StatusCode::CREATED);
+        assert_eq!(store.finalized_count(), 1);
+
+        let second = commit_cache(
+            State(state.clone()),
+            Path(entry.id.to_string()),
+            Json(json!({ "size": 3 })),
+        )
+        .await
+        .expect("second commit result");
+        assert_eq!(second, StatusCode::CREATED);
+        assert_eq!(
+            store.finalized_count(),
+            1,
+            "completed upload should not be finalized again",
+        );
+
+        let upload_status = meta::get_upload_status(&pool, DatabaseDriver::Sqlite, &upload_id)
+            .await
+            .expect("fetch upload status");
         assert_eq!(upload_status.state, "completed");
         assert!(!upload_status.pending_finalize);
     }

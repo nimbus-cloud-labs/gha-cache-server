@@ -501,6 +501,32 @@ pub async fn set_pending_finalize(
     Ok(())
 }
 
+pub async fn claim_pending_finalize(
+    pool: &AnyPool,
+    driver: DatabaseDriver,
+    upload_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let now = Utc::now().timestamp();
+    let query = rewrite_placeholders(
+        "UPDATE cache_uploads SET pending_finalize = ?, updated_at = ? WHERE upload_id = ? AND pending_finalize = ?",
+        driver,
+    );
+    let result = sqlx::query(safe_sql(&query))
+        .bind(true)
+        .bind(now)
+        .bind(upload_id)
+        .bind(false)
+        .execute(pool)
+        .await?;
+
+    if result.rows_affected() == 1 {
+        return Ok(true);
+    }
+
+    let _ = get_upload_status(pool, driver, upload_id).await?;
+    Ok(false)
+}
+
 fn try_get_bool(row: &sqlx::any::AnyRow, column: &str) -> Result<bool, Error> {
     match row.try_get::<bool, _>(column) {
         Ok(value) => Ok(value),

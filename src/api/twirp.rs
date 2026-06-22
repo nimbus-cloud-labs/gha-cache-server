@@ -327,7 +327,7 @@ pub async fn finalize_cache_entry_upload(
     let storage_key: String = rec.try_get("storage_key")?;
 
     let mut status = meta::get_upload_status(&st.pool, st.database_driver, &upload_id).await?;
-    if status.pending_finalize {
+    if status.pending_finalize || status.state == "completed" {
         return Ok(TwirpResponse::new(
             TwirpFinalizeResp {
                 ok: true,
@@ -336,10 +336,14 @@ pub async fn finalize_cache_entry_upload(
             format,
         ));
     }
-    if let Err(err) =
-        meta::set_pending_finalize(&st.pool, st.database_driver, &upload_id, true).await
-    {
-        return Err(err.into());
+    if !meta::claim_pending_finalize(&st.pool, st.database_driver, &upload_id).await? {
+        return Ok(TwirpResponse::new(
+            TwirpFinalizeResp {
+                ok: true,
+                entry_id: uuid_to_i64(entry.id),
+            },
+            format,
+        ));
     }
 
     let run_in_background = if st.defer_finalize_in_background {
