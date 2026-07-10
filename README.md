@@ -30,6 +30,31 @@ By default the binary listens on port `8080`. Additional runtime options are
 available through environment variables; refer to the documentation linked
 above for details.
 
+## Installing on a VM
+
+The project ships native Linux packaging for direct VM installs. Tagged
+releases publish Debian `.deb` and RPM `.rpm` artifacts for `amd64` and `arm64`,
+alongside the container image and Helm chart.
+
+Install the package for your distribution, edit `/etc/gha-cache-server/env`, and
+start the systemd service:
+
+```bash
+sudo apt install ./gha-cache-server_*.deb
+sudo systemctl enable --now gha-cache-server
+```
+
+```bash
+sudo dnf install ./gha-cache-server-*.rpm
+sudo systemctl enable --now gha-cache-server
+```
+
+The default package configuration stores SQLite metadata and filesystem blobs
+under `/var/lib/gha-cache-server`. Production deployments can switch to
+PostgreSQL, MySQL, S3, or Google Cloud Storage through the environment file.
+See the [VM installation guide](docs/vm-installation.md) for package build
+commands and operational notes.
+
 ## Additional documentation
 
 Further configuration topics, including cleanup controls and advanced storage
