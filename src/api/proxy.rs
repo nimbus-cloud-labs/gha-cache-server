@@ -85,6 +85,10 @@ pub async fn proxy_unknown(
     State(state): State<AppState>,
     request: Request<Body>,
 ) -> Result<Response> {
+    proxy_results(&state, request).await
+}
+
+pub(crate) async fn proxy_results(state: &AppState, request: Request<Body>) -> Result<Response> {
     let original = request.uri().clone();
     let path_and_query = original
         .path_and_query()

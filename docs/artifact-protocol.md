@@ -105,7 +105,8 @@ downloaded by later jobs in the same workflow run. When a retry job receives a
 new backend identifier, unfiltered lists are merged with the newest finalized
 entry for each artifact name so client-side pattern filters can still find
 artifacts uploaded by the original attempt. Filtered retry lookups also fall
-back by artifact name or numeric artifact identifier.
+back by artifact name or numeric artifact identifier. If no local artifact
+matches, the request is proxied to the GitHub Actions results receiver.
 
 ### `GetSignedArtifactURL`
 
@@ -129,6 +130,8 @@ Response:
 
 When direct downloads are enabled and the backend can create presigned URLs,
 the response contains a backend URL. Otherwise it contains a local proxy URL.
+If the artifact is not stored locally, the request is proxied to the GitHub
+Actions results receiver.
 
 ### `DeleteArtifact`
 

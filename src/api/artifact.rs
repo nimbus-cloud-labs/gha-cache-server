@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::api::path::encode_path_segment;
 use crate::api::proto::artifact;
+use crate::api::proxy;
 use crate::api::twirp::{TwirpRequest, TwirpResponse};
 use crate::api::upload::body_to_blob_payload;
 use crate::error::{ApiError, Result};
@@ -598,8 +599,8 @@ pub(crate) async fn finalize_artifact(
 pub(crate) async fn list_artifacts(
     State(st): State<AppState>,
     request: TwirpRequest<ListArtifactsReq, artifact::ListArtifactsRequest>,
-) -> Result<TwirpResponse<ListArtifactsResp, artifact::ListArtifactsResponse>> {
-    let (req, format, _) = request.into_parts();
+) -> Result<Response> {
+    let (req, format, _, proxy_request) = request.into_parts_with_proxy();
     let entries = meta::list_artifact_entries(
         &st.pool,
         st.database_driver,
@@ -608,21 +609,26 @@ pub(crate) async fn list_artifacts(
         req.id_filter,
     )
     .await?;
+    if entries.is_empty() {
+        return proxy_github_artifacts(&st, proxy_request).await;
+    }
 
-    Ok(TwirpResponse::new(
-        ListArtifactsResp {
-            artifacts: entries.into_iter().map(entry_to_list_item).collect(),
-        },
-        format,
-    ))
+    let response: TwirpResponse<ListArtifactsResp, artifact::ListArtifactsResponse> =
+        TwirpResponse::new(
+            ListArtifactsResp {
+                artifacts: entries.into_iter().map(entry_to_list_item).collect(),
+            },
+            format,
+        );
+    Ok(response.into_response())
 }
 
 pub(crate) async fn get_signed_artifact_url(
     State(st): State<AppState>,
     request: TwirpRequest<GetSignedArtifactUrlReq, artifact::GetSignedArtifactUrlRequest>,
-) -> Result<TwirpResponse<GetSignedArtifactUrlResp, artifact::GetSignedArtifactUrlResponse>> {
-    let (req, format, origin) = request.into_parts();
-    let entry = meta::find_finalized_artifact_by_name(
+) -> Result<Response> {
+    let (req, format, origin, proxy_request) = request.into_parts_with_proxy();
+    let Some(entry) = meta::find_finalized_artifact_by_name(
         &st.pool,
         st.database_driver,
         &req.workflow_run_backend_id,
@@ -632,8 +638,9 @@ pub(crate) async fn get_signed_artifact_url(
     .or(
         meta::find_latest_finalized_artifact_by_name(&st.pool, st.database_driver, &req.name)
             .await?,
-    )
-    .ok_or(ApiError::NotFound)?;
+    ) else {
+        return proxy_github_artifacts(&st, proxy_request).await;
+    };
 
     let signed_url = if st.enable_direct {
         let presigned = st
@@ -648,10 +655,9 @@ pub(crate) async fn get_signed_artifact_url(
         build_download_url(&origin, &entry)
     };
 
-    Ok(TwirpResponse::new(
-        GetSignedArtifactUrlResp { signed_url },
-        format,
-    ))
+    let response: TwirpResponse<GetSignedArtifactUrlResp, artifact::GetSignedArtifactUrlResponse> =
+        TwirpResponse::new(GetSignedArtifactUrlResp { signed_url }, format);
+    Ok(response.into_response())
 }
 
 pub(crate) async fn download_artifact(
@@ -695,6 +701,18 @@ pub(crate) async fn download_artifact(
         .map_err(|err| ApiError::Internal(format!("invalid header value: {err}")))?,
     );
     Ok(response)
+}
+
+async fn proxy_github_artifacts(
+    st: &AppState,
+    proxy_request: Option<axum::extract::Request>,
+) -> Result<Response> {
+    proxy::proxy_results(
+        st,
+        proxy_request
+            .ok_or_else(|| ApiError::Internal("missing proxied artifact request".into()))?,
+    )
+    .await
 }
 
 pub(crate) async fn browse_artifacts(State(st): State<AppState>) -> Result<Html<String>> {

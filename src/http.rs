@@ -153,6 +153,7 @@ mod tests {
     use bytes::Bytes;
     use http::Uri;
     use http_body_util::BodyExt;
+    use sqlx::any::AnyPoolOptions;
     use std::{sync::Arc, time::Duration};
     use tokio::sync::Mutex;
     use tower::ServiceExt;
@@ -427,5 +428,88 @@ mod tests {
             calls.is_empty(),
             "proxy should not be invoked for known routes"
         );
+    }
+
+    #[tokio::test]
+    async fn artifact_list_miss_proxies_results_receiver() {
+        sqlx::any::install_default_drivers();
+        let mock = MockProxyClient::with_body(
+            StatusCode::OK,
+            r#"{"artifacts":[{"databaseId":7,"name":"github-artifact","size":1}]}"#,
+        );
+        let proxy_arc: Arc<dyn proxy::ProxyHttpClient> = Arc::new(mock.clone());
+        let pool = AnyPoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:?cache=shared")
+            .await
+            .expect("sqlite pool");
+        sqlx::migrate!("./migrations/sqlite")
+            .run(&pool)
+            .await
+            .expect("migrate");
+        let store: Arc<dyn BlobStore> = Arc::new(NoopStore);
+        let mut cfg = test_config();
+        cfg.database_driver = DatabaseDriver::Sqlite;
+
+        let router = build_router_with_proxy(pool, store, &cfg, proxy_arc);
+        let body = r#"{"workflowRunBackendId":"missing-run","nameFilter":"github-artifact"}"#;
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/twirp/github.actions.results.api.v1.ArtifactService/ListArtifacts")
+            .header("host", "cache.example")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer token")
+            .body(Body::from(body))
+            .expect("request");
+
+        let response = router
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("router response");
+
+        let status = response.status();
+        let body_bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{}",
+            String::from_utf8_lossy(&body_bytes)
+        );
+        assert!(String::from_utf8_lossy(&body_bytes).contains("github-artifact"));
+
+        let calls = mock.take_calls().await;
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].body, Bytes::copy_from_slice(body.as_bytes()));
+        assert_eq!(
+            calls[0]
+                .headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok()),
+            Some("Bearer token")
+        );
+
+        let body = r#"{"workflowRunBackendId":"missing-run","name":"github-artifact"}"#;
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/twirp/github.actions.results.api.v1.ArtifactService/GetSignedArtifactURL")
+            .header("host", "cache.example")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer token")
+            .body(Body::from(body))
+            .expect("request");
+
+        let response = router.oneshot(request).await.expect("router response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let calls = mock.take_calls().await;
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].body, Bytes::copy_from_slice(body.as_bytes()));
     }
 }

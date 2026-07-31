@@ -3,10 +3,12 @@ use std::time::Duration;
 
 use axum::{
     Json,
+    body::Body,
     extract::{FromRequest, Request, State},
     http::{HeaderValue, header, request::Parts},
     response::{IntoResponse, Response},
 };
+use bytes::Bytes;
 use http_body_util::BodyExt;
 use prost::Message;
 use serde::{Serialize, de::DeserializeOwned};
@@ -102,12 +104,19 @@ pub struct TwirpRequest<T, P> {
     data: T,
     format: TwirpFormat,
     origin: RequestOrigin,
+    proxy_request: Option<Request<Body>>,
     _marker: PhantomData<P>,
 }
 
 impl<T, P> TwirpRequest<T, P> {
     pub(crate) fn into_parts(self) -> (T, TwirpFormat, RequestOrigin) {
         (self.data, self.format, self.origin)
+    }
+
+    pub(crate) fn into_parts_with_proxy(
+        self,
+    ) -> (T, TwirpFormat, RequestOrigin, Option<Request<Body>>) {
+        (self.data, self.format, self.origin, self.proxy_request)
     }
 
     #[cfg_attr(
@@ -122,6 +131,7 @@ impl<T, P> TwirpRequest<T, P> {
             data,
             format: TwirpFormat::Json,
             origin: RequestOrigin::default(),
+            proxy_request: None,
             _marker: PhantomData,
         }
     }
@@ -197,7 +207,7 @@ where
             TwirpFormat::Json => serde_json::from_slice(&bytes)
                 .map_err(|err| ApiError::BadRequest(format!("invalid JSON payload: {err}")))?,
             TwirpFormat::Protobuf => {
-                let proto = P::decode(bytes).map_err(|err| {
+                let proto = P::decode(bytes.clone()).map_err(|err| {
                     ApiError::BadRequest(format!("invalid protobuf payload: {err}"))
                 })?;
                 T::try_from(proto)?
@@ -208,9 +218,14 @@ where
             data,
             format: response_format,
             origin,
+            proxy_request: Some(rebuild_request(parts, bytes)),
             _marker: PhantomData,
         })
     }
+}
+
+fn rebuild_request(parts: Parts, bytes: Bytes) -> Request<Body> {
+    Request::from_parts(parts, Body::from(bytes))
 }
 
 pub struct TwirpResponse<T, P> {
