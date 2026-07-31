@@ -72,6 +72,9 @@ impl TestServer {
                 interval: Duration::from_secs(3600),
                 max_entry_age: None,
                 max_total_bytes: None,
+                min_available_bytes: None,
+                target_available_bytes: None,
+                filesystem_path: None,
             },
         };
 
@@ -305,6 +308,18 @@ async fn artifact_twirp_roundtrip_uses_local_storage() -> Result<()> {
         retry_id_list.artifacts[0].database_id,
         finalized.artifact_id
     );
+
+    let browse = client
+        .get(format!("{}/artifacts", server.base_url))
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    assert!(browse.contains("<h1>Artifacts</h1>"));
+    assert!(browse.contains("logs"));
+    assert!(browse.contains("/artifact-download/"));
+    assert!(browse.contains("/logs.zip"));
 
     let signed: GetSignedArtifactUrlResponse = client
         .post(server.artifact_endpoint("GetSignedArtifactURL"))

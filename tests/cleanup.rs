@@ -95,6 +95,9 @@ async fn cleanup_removes_expired_entries_and_files() {
         interval: Duration::from_millis(50),
         max_entry_age: None,
         max_total_bytes: None,
+        min_available_bytes: None,
+        target_available_bytes: None,
+        filesystem_path: None,
     };
 
     let cleanup_pool = pool.clone();
@@ -159,6 +162,9 @@ async fn cleanup_enforces_size_limit() {
         interval: Duration::from_millis(50),
         max_entry_age: None,
         max_total_bytes: Some(8),
+        min_available_bytes: None,
+        target_available_bytes: None,
+        filesystem_path: None,
     };
 
     let cleanup_pool = pool.clone();
@@ -189,6 +195,60 @@ async fn cleanup_enforces_size_limit() {
 
     handle.abort();
     let _ = handle.await;
+}
+
+#[tokio::test]
+async fn cleanup_enforces_filesystem_free_space_threshold() {
+    let pool = setup_pool().await;
+    let temp_dir = TempDir::new().expect("temp dir");
+    let store = Arc::new(
+        FsStore::new(temp_dir.path().to_path_buf(), None, None, None)
+            .await
+            .expect("create store"),
+    );
+
+    let base = chrono::Utc::now().timestamp();
+    let _older = create_entry_with_file(
+        &pool,
+        temp_dir.path(),
+        "older",
+        base - 200,
+        1_000,
+        b"abcdefgh",
+    )
+    .await;
+    let _newer = create_entry_with_file(
+        &pool,
+        temp_dir.path(),
+        "newer",
+        base - 100,
+        1_000,
+        b"ijklmnop",
+    )
+    .await;
+
+    let settings = CleanupSettings {
+        interval: Duration::from_millis(50),
+        max_entry_age: None,
+        max_total_bytes: None,
+        min_available_bytes: Some(u64::MAX),
+        target_available_bytes: None,
+        filesystem_path: Some(temp_dir.path().to_path_buf()),
+    };
+
+    let cleanup_store: Arc<dyn BlobStore> = store.clone();
+    cleanup::run_cleanup_once(&pool, cleanup_store, &settings, DatabaseDriver::Sqlite)
+        .await
+        .expect("run cleanup");
+
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM cache_entries")
+        .fetch_one(&pool)
+        .await
+        .expect("count entries");
+    assert_eq!(remaining, 0);
+
+    assert!(fs::metadata(temp_dir.path().join("older")).await.is_err());
+    assert!(fs::metadata(temp_dir.path().join("newer")).await.is_err());
 }
 
 #[tokio::test]

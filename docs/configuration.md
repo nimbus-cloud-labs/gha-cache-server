@@ -80,6 +80,15 @@ following environment variables control this background job:
 * `CACHE_STORAGE_MAX_BYTES` – optional soft limit for the total size (in bytes)
   of all cache entries. When the limit is exceeded, the cleanup loop removes the
   least recently accessed entries until usage drops below the threshold.
+* `CACHE_STORAGE_MIN_AVAILABLE_BYTES` – optional filesystem free-space
+  threshold for the `fs` backend. When the storage filesystem has less free
+  space than this value, the cleanup loop removes the least recently accessed
+  cache entries.
+* `CACHE_STORAGE_TARGET_AVAILABLE_BYTES` – optional filesystem free-space
+  target for the `fs` backend. Once cleanup starts because
+  `CACHE_STORAGE_MIN_AVAILABLE_BYTES` was crossed, entries are removed until the
+  estimated free space reaches this value. When omitted, it defaults to
+  `CACHE_STORAGE_MIN_AVAILABLE_BYTES`.
 
 ## Administrative cache resets
 

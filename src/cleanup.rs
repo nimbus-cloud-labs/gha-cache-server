@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -22,13 +23,13 @@ pub async fn run_cleanup_loop(
     loop {
         ticker.tick().await;
 
-        if let Err(err) = run_iteration(&pool, store.clone(), &settings, driver).await {
+        if let Err(err) = run_cleanup_once(&pool, store.clone(), &settings, driver).await {
             error!(?err, "cleanup iteration failed");
         }
     }
 }
 
-async fn run_iteration(
+pub async fn run_cleanup_once(
     pool: &AnyPool,
     store: Arc<dyn BlobStore>,
     settings: &CleanupSettings,
@@ -121,7 +122,131 @@ async fn run_iteration(
         }
     }
 
+    if let Some(min_available) = settings.min_available_bytes {
+        if let Some(path) = settings.filesystem_path.as_deref() {
+            match available_bytes(path).await {
+                Ok(available) => {
+                    enforce_available_space(
+                        pool,
+                        store.clone(),
+                        settings,
+                        driver,
+                        min_available,
+                        available,
+                    )
+                    .await?;
+                }
+                Err(err) => {
+                    warn!(
+                        path = %path.display(),
+                        ?err,
+                        "failed to read filesystem free space for cleanup"
+                    );
+                }
+            }
+        } else {
+            debug!(
+                min_available,
+                "filesystem free-space cleanup is configured but unavailable for this storage backend"
+            );
+        }
+    }
+
     Ok(())
+}
+
+async fn enforce_available_space(
+    pool: &AnyPool,
+    store: Arc<dyn BlobStore>,
+    settings: &CleanupSettings,
+    driver: DatabaseDriver,
+    min_available: u64,
+    mut available: u64,
+) -> anyhow::Result<()> {
+    if available >= min_available {
+        return Ok(());
+    }
+
+    let target = settings
+        .target_available_bytes
+        .unwrap_or(min_available)
+        .max(min_available);
+    info!(
+        available,
+        min_available, target, "filesystem free space is below threshold"
+    );
+
+    let entries = meta::list_entries_ordered(pool, driver, None).await?;
+    for entry in entries {
+        if available >= target {
+            break;
+        }
+
+        match purge_entry(&store, pool, driver, &entry).await {
+            Ok(()) => {
+                let size = clamp_size(entry.size_bytes);
+                available = available.saturating_add(size);
+                debug!(
+                    entry_id = %entry.id,
+                    size,
+                    available,
+                    target,
+                    "deleted entry to reclaim filesystem space"
+                );
+            }
+            Err(err) => {
+                error!(
+                    entry_id = %entry.id,
+                    storage_key = %entry.storage_key,
+                    ?err,
+                    "failed to delete cache entry during filesystem cleanup"
+                );
+            }
+        }
+    }
+
+    if available < target {
+        warn!(
+            available,
+            target, "cleanup loop could not restore filesystem free space to target"
+        );
+    }
+
+    Ok(())
+}
+
+async fn available_bytes(path: &Path) -> anyhow::Result<u64> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || available_bytes_blocking(&path))
+        .await
+        .context("filesystem free-space check panicked")?
+}
+
+#[cfg(unix)]
+fn available_bytes_blocking(path: &Path) -> anyhow::Result<u64> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = CString::new(path.as_os_str().as_bytes())
+        .with_context(|| format!("path contains an interior NUL byte: {}", path.display()))?;
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `c_path` is a valid, NUL-terminated filesystem path and `stat`
+    // points to writable memory for `statvfs` to initialize on success.
+    let result = unsafe { libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("failed to stat filesystem for {}", path.display()));
+    }
+
+    // SAFETY: `statvfs` returned success, so it initialized `stat`.
+    let stat = unsafe { stat.assume_init() };
+    Ok(stat.f_bavail.saturating_mul(stat.f_frsize))
+}
+
+#[cfg(not(unix))]
+fn available_bytes_blocking(path: &Path) -> anyhow::Result<u64> {
+    let _ = path;
+    anyhow::bail!("filesystem free-space cleanup is not supported on this platform")
 }
 
 async fn purge_entry(

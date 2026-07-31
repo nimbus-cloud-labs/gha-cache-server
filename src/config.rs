@@ -1,4 +1,4 @@
-use std::{env::VarError, fs, path::PathBuf, str::FromStr, time::Duration};
+use std::{env::VarError, fs, path::Path, path::PathBuf, str::FromStr, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -75,6 +75,9 @@ pub struct CleanupSettings {
     pub interval: Duration,
     pub max_entry_age: Option<Duration>,
     pub max_total_bytes: Option<u64>,
+    pub min_available_bytes: Option<u64>,
+    pub target_available_bytes: Option<u64>,
+    pub filesystem_path: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -225,6 +228,24 @@ impl Config {
         let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL is required");
         let database_driver = DatabaseDriver::from_url(&database_url)?;
 
+        let cleanup_min_available_bytes = std::env::var("CACHE_STORAGE_MIN_AVAILABLE_BYTES")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok());
+        let cleanup_target_available_bytes = std::env::var("CACHE_STORAGE_TARGET_AVAILABLE_BYTES")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .or(cleanup_min_available_bytes);
+        if let (Some(min), Some(target)) =
+            (cleanup_min_available_bytes, cleanup_target_available_bytes)
+            && target < min
+        {
+            bail!(
+                "CACHE_STORAGE_TARGET_AVAILABLE_BYTES must be greater than or equal to CACHE_STORAGE_MIN_AVAILABLE_BYTES"
+            );
+        }
+        let cleanup_filesystem_path =
+            cleanup_filesystem_path(&blob_store, fs.as_ref().map(|cfg| cfg.root.as_path()));
+
         Ok(Self {
             port: std::env::var("PORT")
                 .ok()
@@ -267,8 +288,22 @@ impl Config {
                 max_total_bytes: std::env::var("CACHE_STORAGE_MAX_BYTES")
                     .ok()
                     .and_then(|v| v.parse::<u64>().ok()),
+                min_available_bytes: cleanup_min_available_bytes,
+                target_available_bytes: cleanup_target_available_bytes,
+                filesystem_path: cleanup_filesystem_path,
             },
         })
+    }
+}
+
+fn cleanup_filesystem_path(
+    blob_store: &BlobStoreSelector,
+    fs_root: Option<&Path>,
+) -> Option<PathBuf> {
+    if matches!(blob_store, BlobStoreSelector::Fs) {
+        fs_root.map(Path::to_path_buf)
+    } else {
+        None
     }
 }
 

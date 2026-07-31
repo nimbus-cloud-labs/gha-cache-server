@@ -112,6 +112,9 @@ impl TestServer {
                 interval: Duration::from_secs(3600),
                 max_entry_age: None,
                 max_total_bytes: None,
+                min_available_bytes: None,
+                target_available_bytes: None,
+                filesystem_path: None,
             },
         };
 

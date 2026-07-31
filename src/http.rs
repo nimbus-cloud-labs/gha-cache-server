@@ -115,6 +115,7 @@ pub(crate) fn build_router_with_proxy(
             "/artifact-download/{artifact_id}/{filename}",
             get(artifact::download_artifact),
         )
+        .route("/artifacts", get(artifact::browse_artifacts))
         // 3) PUT /upload/{cache-id}
         .route("/upload/{cache_id}", put(upload_compat::put_upload))
         .fallback(proxy::proxy_unknown)
@@ -300,6 +301,9 @@ mod tests {
                 interval: Duration::from_secs(300),
                 max_entry_age: None,
                 max_total_bytes: None,
+                min_available_bytes: None,
+                target_available_bytes: None,
+                filesystem_path: None,
             },
         }
     }

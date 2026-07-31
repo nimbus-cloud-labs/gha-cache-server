@@ -21,7 +21,8 @@ in a ConfigMap. Populate the maps through the following values:
 - `.env.config` – map of environment variables rendered into the ConfigMap.
   Typical entries include `BLOB_STORE`, `DATABASE_DRIVER` and the cleanup
   tunables (`CLEANUP_INTERVAL_SECS`, `CACHE_ENTRY_MAX_AGE_SECS`,
-  `CACHE_STORAGE_MAX_BYTES`).
+  `CACHE_STORAGE_MAX_BYTES`, `CACHE_STORAGE_MIN_AVAILABLE_BYTES` and
+  `CACHE_STORAGE_TARGET_AVAILABLE_BYTES`).
 - `.env.secret` – map of secrets injected through `envFrom`. Set
   `DATABASE_URL` and storage credentials here.
 - `.env.existingConfigMap` / `.env.existingSecret` – reference pre-existing
@@ -111,6 +112,8 @@ env:
     CLEANUP_INTERVAL_SECS: "300"
     CACHE_ENTRY_MAX_AGE_SECS: "86400"
     CACHE_STORAGE_MAX_BYTES: "107374182400"
+    CACHE_STORAGE_MIN_AVAILABLE_BYTES: "10737418240"
+    CACHE_STORAGE_TARGET_AVAILABLE_BYTES: "21474836480"
 ```
 
 ### Ingress and service exposure
