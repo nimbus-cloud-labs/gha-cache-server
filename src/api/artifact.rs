@@ -2,7 +2,7 @@ use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
-    response::{IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Redirect, Response},
 };
 use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Utc};
@@ -697,6 +697,34 @@ pub(crate) async fn download_artifact(
     Ok(response)
 }
 
+pub(crate) async fn browse_artifacts(State(st): State<AppState>) -> Result<Html<String>> {
+    let entries =
+        meta::list_latest_finalized_artifact_entries_by_name(&st.pool, st.database_driver).await?;
+    let mut rows = String::new();
+    for entry in entries {
+        let filename = artifact_filename(&entry);
+        let href = format!(
+            "/artifact-download/{}/{}",
+            entry.id,
+            encode_path_segment(&filename)
+        );
+        rows.push_str(&format!(
+            "<tr><td><a href=\"{}\">{}</a></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            escape_html(&href),
+            escape_html(&entry.name),
+            entry.numeric_id,
+            entry.size_bytes,
+            escape_html(entry.hash.as_deref().unwrap_or("")),
+            escape_html(&entry.workflow_run_backend_id),
+            escape_html(&entry.created_at.to_rfc3339()),
+        ));
+    }
+    Ok(Html(format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Artifacts</title><style>body{{font-family:system-ui,sans-serif;margin:2rem}}table{{border-collapse:collapse;width:100%}}th,td{{border-bottom:1px solid #ddd;padding:.5rem;text-align:left}}td{{font-family:ui-monospace,monospace}}td:first-child,th:first-child{{font-family:inherit}}</style></head><body><h1>Artifacts</h1><table><thead><tr><th>Name</th><th>ID</th><th>Size</th><th>Digest</th><th>Workflow Run Backend ID</th><th>Created</th></tr></thead><tbody>{}</tbody></table></body></html>",
+        rows
+    )))
+}
+
 pub(crate) async fn delete_artifact(
     State(st): State<AppState>,
     request: TwirpRequest<DeleteArtifactReq, artifact::DeleteArtifactRequest>,
@@ -776,6 +804,14 @@ fn build_download_url(origin: &crate::api::twirp::RequestOrigin, entry: &Artifac
 
 fn artifact_filename(entry: &ArtifactEntry) -> String {
     format!("{}.zip", entry.name.replace(['/', '\\'], "_"))
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn artifact_block_storage_key(entry: &ArtifactEntry, upload_id: &str, block_id: &str) -> String {

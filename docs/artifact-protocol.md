@@ -154,6 +154,15 @@ Response:
 Deleted artifacts are hidden from list/download responses and their blob is
 removed from storage.
 
+## Human browsing
+
+Open `/artifacts` in a browser to list the newest finalized artifact for each
+artifact name. Each row links to the local download endpoint:
+
+```text
+/artifact-download/<artifact-uuid>/<artifact-name>.zip
+```
+
 ## Expiration
 
 When `CreateArtifact` includes `expiresAt`, the cleanup loop removes the
